@@ -1,0 +1,12 @@
+# File: requirements.txt
+#
+# Dipendenze per l'applicazione Streamlit SPX Analyzer
+# Come da Sezione 8 del documento di progettazione, più Streamlit
+
+streamlit>=1.0.0
+pandas>=1.5.0
+numpy>=1.23.0
+plotly>=5.0.0
+scipy>=1.9.0       # Per l'interpolazione della superficie 3D (Cella 9)
+# py_vollib rimosso: il Vanna è ora calcolato analiticamente con scipy (già incluso)
+cachetools>=5.0.0  # Per la cache (Sez 8)
