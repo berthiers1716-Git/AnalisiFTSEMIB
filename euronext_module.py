@@ -7,6 +7,7 @@
 # -----------------------------------------------------------------------------
 
 import calendar
+import datetime as dt
 import numpy as np
 import pandas as pd
 from scipy.stats import norm as _norm
@@ -173,13 +174,14 @@ import re
 _LOG_COLS = ['data_riferimento', 'scadenza', 'strike', 'tipo', 'volume', 'oi',
              'settle', 'notional_stimato_eur', 'spot', 'moneyness',
              'oi_giorno_precedente', 'delta_oi', 'stato_conferma', 'significativo',
-             'ora', 'spot_preciso']
+             'ora', 'spot_preciso', 'nota']
 
 _COL_DEFAULTS = {
     'stato_conferma': 'in attesa',
     'significativo': True,
     'ora': '',
     'spot_preciso': np.nan,
+    'nota': '',
 }
 
 
@@ -212,6 +214,7 @@ def log_significant_volume_events(df_raw, analysis_date, spot_price, contract_mu
         existing['stato_conferma'] = existing['stato_conferma'].astype(object).fillna('in attesa')
         existing['significativo'] = existing['significativo'].astype(object).where(existing['significativo'].notna(), True)
         existing['ora'] = existing['ora'].astype(object).fillna('')
+        existing['nota'] = existing['nota'].astype(object).fillna('')
     else:
         existing = pd.DataFrame(columns=_LOG_COLS)
 
@@ -232,6 +235,7 @@ def log_significant_volume_events(df_raw, analysis_date, spot_price, contract_mu
     new_rows['significativo'] = True
     new_rows['ora'] = ''
     new_rows['spot_preciso'] = np.nan
+    new_rows['nota'] = ''
     new_rows = new_rows[_LOG_COLS]
 
     key_cols = ['data_riferimento', 'scadenza', 'strike', 'tipo']
@@ -308,6 +312,7 @@ def reconcile_log(log_path, dati_folder, confirm_ratio=0.30):
     log_df['stato_conferma'] = log_df['stato_conferma'].astype(object).fillna('in attesa')
     log_df['significativo'] = log_df['significativo'].astype(object).where(log_df['significativo'].notna(), True)
     log_df['ora'] = log_df['ora'].astype(object).fillna('')
+    log_df['nota'] = log_df['nota'].astype(object).fillna('')
     if log_df.empty:
         return 0, 0, log_df
 
@@ -380,6 +385,7 @@ def update_log_fields(log_path, edited_subset, editable_cols=('significativo', '
             log_df[col] = _default_for_col(col)
     log_df['significativo'] = log_df['significativo'].astype(object).where(log_df['significativo'].notna(), True)
     log_df['ora'] = log_df['ora'].astype(object).fillna('')
+    log_df['nota'] = log_df['nota'].astype(object).fillna('')
 
     key_cols = ['data_riferimento', 'scadenza', 'strike', 'tipo']
     log_df['_key'] = log_df[key_cols].astype(str).agg('|'.join, axis=1)
@@ -500,3 +506,60 @@ def ricostruisci_storico_totali(dati_folder, log_path, percorso_prezzi=None):
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
     storico.to_csv(log_path, index=False)
     return len(storico), storico
+
+
+# =============================================================================
+# DIARIO NOTE LIBERE (osservazioni non legate a un singolo evento/riga)
+# =============================================================================
+_NOTE_COLS = ['id', 'data_ora', 'contesto', 'nota']
+
+
+def aggiungi_nota_diario(log_path, contesto, testo):
+    """Aggiunge una nuova nota libera al diario, con timestamp automatico."""
+    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+    if os.path.exists(log_path):
+        note = pd.read_csv(log_path)
+    else:
+        note = pd.DataFrame(columns=_NOTE_COLS)
+
+    nuovo_id = int(note['id'].max()) + 1 if not note.empty else 1
+    nuova = pd.DataFrame([{
+        'id': nuovo_id,
+        'data_ora': dt.datetime.now().strftime('%Y-%m-%d %H:%M'),
+        'contesto': contesto or '',
+        'nota': testo,
+    }])
+    note = pd.concat([note, nuova], ignore_index=True)
+    note.to_csv(log_path, index=False)
+    return note
+
+
+def elimina_nota_diario(log_path, id_nota):
+    """Rimuove una nota dal diario in base al suo id."""
+    if not os.path.exists(log_path):
+        return pd.DataFrame(columns=_NOTE_COLS)
+    note = pd.read_csv(log_path)
+    note = note[note['id'] != id_nota]
+    note.to_csv(log_path, index=False)
+    return note
+
+
+def modifica_nota_diario(log_path, id_nota, nuovo_testo, nuovo_contesto=None):
+    """
+    Aggiorna il testo (ed eventualmente il contesto) di una nota esistente,
+    aggiornando anche data_ora all'istante della modifica - cosi' se tieni
+    una sola nota al giorno e la aggiorni più volte, resta chiaro quando
+    e' stata toccata l'ultima volta.
+    """
+    if not os.path.exists(log_path):
+        return pd.DataFrame(columns=_NOTE_COLS)
+    note = pd.read_csv(log_path)
+    note['contesto'] = note['contesto'].astype(object).fillna('')
+    mask = note['id'] == id_nota
+    if mask.any():
+        note.loc[mask, 'nota'] = nuovo_testo
+        if nuovo_contesto is not None:
+            note.loc[mask, 'contesto'] = nuovo_contesto
+        note.loc[mask, 'data_ora'] = dt.datetime.now().strftime('%Y-%m-%d %H:%M')
+    note.to_csv(log_path, index=False)
+    return note

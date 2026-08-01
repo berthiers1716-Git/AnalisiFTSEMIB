@@ -22,7 +22,7 @@ from plotly.subplots import make_subplots
 from euronext_module import (
     parse_euronext_text, enrich_with_greeks, log_significant_volume_events,
     reconcile_log, update_log_fields, log_totali_giornalieri, ricostruisci_storico_totali,
-    aggiungi_nota_diario, elimina_nota_diario, modifica_nota_diario, _bs_price
+    aggiungi_nota_diario, elimina_nota_diario, modifica_nota_diario
 )
 from calculations_module import (
     calculate_gex_metrics, calculate_oi_walls, calculate_max_pain,
@@ -52,18 +52,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-def _leggi_versione():
-    try:
-        with open("VERSION.txt") as f:
-            return f.read().strip()
-    except FileNotFoundError:
-        return None
-
-_app_version = _leggi_versione()
-_titolo = "📊 FTSEMIB Options Analyzer (Euronext)"
-if _app_version:
-    _titolo += f"  `v{_app_version}`"
-st.title(_titolo)
+st.title("📊 FTSEMIB Options Analyzer (Euronext)")
 st.caption(
     "⚠️ **Solo a scopo informativo/educativo — NON è consulenza finanziaria.** "
     "Delta, Gamma, IV e Vanna non sono forniti da Euronext: sono stimati qui invertendo "
@@ -126,54 +115,21 @@ st.caption(
     "più scadenze incluse). Usa un export con Open Interest già disponibile (di solito il "
     "giorno successivo alla data di riferimento)."
 )
-
-_sorgente_file = st.radio(
-    "Sorgente del file",
-    ["Carica dal dispositivo", "Scegli dalla cartella dati/ (sul server)"],
-    horizontal=True,
-    help="Se accedi da un altro dispositivo in rete (es. un tablet), 'Carica dal dispositivo' "
-         "cerca il file nello storage di QUEL dispositivo, non su questo computer. Se il file "
-         "è già salvato nella cartella dati/ di questo computer, usa la seconda opzione."
-)
+uploaded_file = st.file_uploader("File CSV opzioni", type=["csv", "txt"], key="options_csv")
 
 df_raw, analysis_date = None, None
 TOTALI_LOG_PATH = "dati_locali/storico_totali.csv"
 
-if _sorgente_file == "Carica dal dispositivo":
-    uploaded_file = st.file_uploader("File CSV opzioni", type=["csv", "txt"], key="options_csv")
-    if uploaded_file is not None:
-        try:
-            text = uploaded_file.getvalue().decode("utf-8-sig")
-            df_raw, analysis_date = parse_euronext_text(text)
-            n_expiries = df_raw['Expiration Date'].nunique()
-            st.success(f"Letto: {len(df_raw)} righe, {n_expiries} scadenze, data di riferimento {analysis_date.date()}.")
-        except Exception as e:
-            st.error(f"Errore nel parsing del file: {e}")
-    else:
-        st.info("In attesa del caricamento del file CSV...")
+if uploaded_file is not None:
+    try:
+        text = uploaded_file.getvalue().decode("utf-8-sig")
+        df_raw, analysis_date = parse_euronext_text(text)
+        n_expiries = df_raw['Expiration Date'].nunique()
+        st.success(f"Letto: {len(df_raw)} righe, {n_expiries} scadenze, data di riferimento {analysis_date.date()}.")
+    except Exception as e:
+        st.error(f"Errore nel parsing del file: {e}")
 else:
-    _cartella_dati_step1 = st.text_input(
-        "Cartella file dati (sul server)", value="dati", key="cartella_dati_step1"
-    )
-    if os.path.isdir(_cartella_dati_step1):
-        _file_disponibili = sorted(
-            [f for f in os.listdir(_cartella_dati_step1) if f.lower().endswith(('.csv', '.txt'))],
-            reverse=True
-        )
-        if _file_disponibili:
-            _file_scelto = st.selectbox("File disponibili (più recente in cima)", _file_disponibili)
-            try:
-                with open(os.path.join(_cartella_dati_step1, _file_scelto), encoding="utf-8-sig") as f:
-                    text = f.read()
-                df_raw, analysis_date = parse_euronext_text(text)
-                n_expiries = df_raw['Expiration Date'].nunique()
-                st.success(f"Letto: {len(df_raw)} righe, {n_expiries} scadenze, data di riferimento {analysis_date.date()}.")
-            except Exception as e:
-                st.error(f"Errore nel parsing del file: {e}")
-        else:
-            st.warning(f"Nessun file .csv/.txt trovato in `{_cartella_dati_step1}`.")
-    else:
-        st.warning(f"Cartella non trovata: `{_cartella_dati_step1}` (percorso relativo alla cartella da cui hai lanciato l'app sul server).")
+    st.info("In attesa del caricamento del file CSV...")
 
 st.subheader("2. Storico prezzi FTSEMIB (opzionale, per lo spot)")
 st.caption(
@@ -321,10 +277,9 @@ if df_raw is not None and spot_price > 0:
         dex_metrics      = calculate_dex_metrics(df_selected_expiry_oi, spot_price)
         vex_metrics      = calculate_vex_metrics(df_selected_expiry_oi, spot_price, risk_free_rate, dividend_yield)
 
-    tab_summary, tab_gex, tab_vex_dex, tab_oi_vol, tab_stats, tab_vol_surf, tab_eventi, tab_storico, tab_note, tab_decay, tab_ripart = st.tabs([
+    tab_summary, tab_gex, tab_vex_dex, tab_oi_vol, tab_stats, tab_vol_surf, tab_eventi, tab_storico, tab_note = st.tabs([
         '📋 Summary', '📊 Gamma (GEX)', '🧩 Vanna & Delta (VEX/DEX)',
-        '🎯 Support/Res (OI & Vol)', '📉 Stats', '📈 Vol Surface', '📋 Eventi Volume',
-        '📈 Andamento Storico', '📝 Note', '⏳ Decadimento', '⚖️ Ripartizione OI'
+        '🎯 Support/Res (OI & Vol)', '📉 Stats', '📈 Vol Surface', '📋 Eventi Volume', '📈 Andamento Storico', '📝 Note'
     ])
 
     # ========================= TAB SUMMARY =========================
@@ -412,23 +367,6 @@ if df_raw is not None and spot_price > 0:
             st.plotly_chart(create_volume_profile_chart(
                 vol_metrics['df_vol_profile'], spot_price, selected_expiry_label
             ), width="stretch", key="summary_vol")
-
-        st.divider()
-        with st.expander("📄 Dati opzione in forma tabellare (questa scadenza)", expanded=False):
-            _colonne_tabella = ['Strike', 'Type', 'Settle', 'Vol', 'OI', 'Delta', 'Gamma', 'IV', 'Moneyness']
-            _tabella_dati = df_selected_expiry[_colonne_tabella].copy().sort_values('Strike').reset_index(drop=True)
-            _tabella_dati.columns = ['Strike', 'Tipo', 'Settle', 'Volume', 'OI', 'Delta', 'Gamma', 'IV', 'Moneyness']
-            st.dataframe(
-                _tabella_dati.style.format({
-                    'Settle': '{:.2f}', 'Delta': '{:.3f}', 'Gamma': '{:.5f}',
-                    'IV': '{:.2%}', 'Moneyness': '{:.3f}'
-                }),
-                width="stretch", hide_index=True
-            )
-            st.caption(
-                "Tutti gli strike di questa scadenza (anche con OI/Volume a zero). Delta/Gamma/IV sono "
-                "stime via Black-Scholes, non dati di mercato osservati."
-            )
 
     # ========================= TAB GEX =========================
     with tab_gex:
@@ -713,7 +651,6 @@ file caricato), così non restano in mezzo scadenze ormai concluse.
                     _log_df[_col] = _default
             _log_df['significativo'] = _log_df['significativo'].astype(object).where(_log_df['significativo'].notna(), True)
             _log_df['ora'] = _log_df['ora'].astype(object).fillna('')
-            _log_df['nota'] = _log_df['nota'].astype(object).fillna('')
 
         if _log_df is None or _log_df.empty:
             st.info("Nessun log ancora creato: premi 'Registra eventi di questo file nel log' qui sopra.")
@@ -837,30 +774,17 @@ ordini di grandezza più alto: sullo stesso asse il Volume sparirebbe schiacciat
                     row_heights=[0.34, 0.33, 0.33],
                     subplot_titles=("Spot FTSEMIB", "Open Interest totale", "Volume totale")
                 )
-                _fig.add_trace(go.Scatter(
-                    x=_storico_totali['data'], y=_storico_totali['spot'], mode='lines+markers', name='Spot',
-                    line=dict(color='#60a5fa'), hovertemplate='%{x}<br>Spot: %{y:,.2f}<extra></extra>'
-                ), row=1, col=1)
-                _fig.add_trace(go.Scatter(
-                    x=_storico_totali['data'], y=_storico_totali['oi_totale'], mode='lines+markers', name='OI totale',
-                    line=dict(color='#34d399'), hovertemplate='%{x}<br>OI totale: %{y:,.0f}<extra></extra>'
-                ), row=2, col=1)
-                _fig.add_trace(go.Scatter(
-                    x=_storico_totali['data'], y=_storico_totali['volume_totale'], mode='lines+markers', name='Volume totale',
-                    line=dict(color='#f97316'), hovertemplate='%{x}<br>Volume totale: %{y:,.0f}<extra></extra>'
-                ), row=3, col=1)
-                _fig.update_layout(
-                    height=650, template='plotly_dark', margin=dict(l=10, r=10, t=40, b=10), showlegend=False,
-                    hovermode='x unified'
-                )
-                _fig.update_xaxes(showspikes=True, spikemode='across', spikesnap='cursor',
-                                   spikethickness=1, spikedash='dot', spikecolor='#94a3b8')
+                _fig.add_trace(go.Scatter(x=_storico_totali['data'], y=_storico_totali['spot'],
+                                           mode='lines+markers', name='Spot', line=dict(color='#60a5fa')), row=1, col=1)
+                _fig.add_trace(go.Scatter(x=_storico_totali['data'], y=_storico_totali['oi_totale'],
+                                           mode='lines+markers', name='OI totale', line=dict(color='#34d399')), row=2, col=1)
+                _fig.add_trace(go.Scatter(x=_storico_totali['data'], y=_storico_totali['volume_totale'],
+                                           mode='lines+markers', name='Volume totale', line=dict(color='#f97316')), row=3, col=1)
+                _fig.update_layout(height=650, template='plotly_dark', margin=dict(l=10, r=10, t=40, b=10), showlegend=False)
                 st.plotly_chart(_fig, width="stretch", key="storico_totali_chart")
                 st.caption(
-                    "Tre pannelli allineati sulla stessa data, ciascuno con la propria scala. Passa il cursore "
-                    "su un punto qualsiasi: la data compare in alto al tooltip, con una linea verticale che "
-                    "attraversa tutti e tre i pannelli per allineare visivamente lo stesso giorno. Confronta se "
-                    "un salto di OI o Volume coincide con un movimento marcato dello spot in alto."
+                    "Tre pannelli allineati sulla stessa data, ciascuno con la propria scala. Confronta se un "
+                    "salto di OI o Volume coincide con un movimento marcato dello spot in alto."
                 )
             else:
                 st.info("Serve almeno un secondo giorno per mostrare il grafico.")
@@ -899,208 +823,27 @@ ordini di grandezza più alto: sullo stesso asse il Volume sparirebbe schiacciat
                 st.info("Nessuna nota ancora salvata.")
             else:
                 for _, _riga in _diario.sort_values('id', ascending=False).iterrows():
-                    _id_nota = _riga['id']
-                    _chiave_editing = f"editing_nota_{_id_nota}"
-                    _in_modifica = st.session_state.get(_chiave_editing, False)
-
                     with st.container(border=True):
                         _intestazione = f"**{_riga['data_ora']}**"
                         if _riga['contesto']:
                             _intestazione += f" — _{_riga['contesto']}_"
                         st.markdown(_intestazione)
-
-                        if _in_modifica:
-                            _testo_modificato = st.text_area(
-                                "Testo", value=_riga['nota'], key=f"nota_testo_{_id_nota}",
-                                label_visibility="collapsed"
-                            )
-                            _col_salva, _col_annulla, _col_elimina = st.columns([1, 1, 1])
-                            with _col_salva:
-                                if st.button("💾 Salva", key=f"salva_nota_{_id_nota}"):
-                                    modifica_nota_diario(NOTE_LOG_PATH, _id_nota, _testo_modificato)
-                                    st.session_state[_chiave_editing] = False
-                                    st.success("Nota aggiornata.")
-                                    st.rerun()
-                            with _col_annulla:
-                                if st.button("Annulla", key=f"annulla_nota_{_id_nota}"):
-                                    st.session_state[_chiave_editing] = False
-                                    st.rerun()
-                            with _col_elimina:
-                                if st.button("🗑️ Elimina", key=f"elimina_nota_{_id_nota}"):
-                                    elimina_nota_diario(NOTE_LOG_PATH, _id_nota)
-                                    st.rerun()
-                        else:
-                            st.write(_riga['nota'])
-                            if st.button("✏️ Modifica", key=f"modifica_nota_{_id_nota}"):
-                                st.session_state[_chiave_editing] = True
+                        _testo_modificato = st.text_area(
+                            "Testo", value=_riga['nota'], key=f"nota_testo_{_riga['id']}",
+                            label_visibility="collapsed"
+                        )
+                        _col_salva, _col_elimina = st.columns([1, 1])
+                        with _col_salva:
+                            if st.button("💾 Salva modifiche", key=f"salva_nota_{_riga['id']}"):
+                                modifica_nota_diario(NOTE_LOG_PATH, _riga['id'], _testo_modificato)
+                                st.success("Nota aggiornata.")
+                                st.rerun()
+                        with _col_elimina:
+                            if st.button("🗑️ Elimina", key=f"elimina_nota_{_riga['id']}"):
+                                elimina_nota_diario(NOTE_LOG_PATH, _riga['id'])
                                 st.rerun()
         else:
             st.info("Nessuna nota ancora salvata: scrivi la prima qui sopra.")
-
-    # ========================= TAB DECADIMENTO =========================
-    with tab_decay:
-        st.header(f"Decadimento Temporale (Theta) — {selected_expiry_label}")
-
-        with st.expander("ℹ️ Come leggere questa sezione", expanded=False):
-            st.markdown(
-                """
-**In parole semplici.** Un'opzione perde valore man mano che passa il tempo, anche se
-il sottostante restasse fermo — è il cosiddetto *decadimento temporale* (Theta). Questo
-grafico mostra come varierebbe il prezzo teorico dello strike **più vicino allo spot**
-(ATM) di questa scadenza, giorno dopo giorno, fino alla scadenza stessa.
-
-**⚠️ È una stima "a condizioni ferme", non una previsione.** Il calcolo tiene **fissi**
-lo spot e la volatilità implicita ai valori di oggi, e fa variare solo il tempo residuo.
-Nella realtà spot e volatilità si muoveranno, quindi il prezzo reale seguirà una strada
-diversa da questa curva — è utile per farsi un'idea della *forma* del decadimento
-(tipicamente si accelera avvicinandosi alla scadenza), non per prevedere il prezzo esatto
-di un giorno specifico.
-
-**Perché la curva accelera vicino alla scadenza.** Il valore residuo di un'opzione ATM
-è quasi tutto "valore tempo" (nessun valore intrinseco): più ci si avvicina alla
-scadenza, meno tempo resta perché il sottostante si muova a favore, quindi il valore
-si consuma sempre più in fretta — non in modo lineare.
-                """
-            )
-
-        _atm_idx = (df_selected_expiry_oi['Strike'] - spot_price).abs().idxmin()
-        _atm_strike = df_selected_expiry_oi.loc[_atm_idx, 'Strike']
-        _atm_rows = df_selected_expiry_oi[df_selected_expiry_oi['Strike'] == _atm_strike]
-        _iv_atm_decay = _atm_rows['IV'].mean()
-        _dte_max = int(df_selected_expiry_oi['DTE_Days'].iloc[0])
-
-        if pd.isna(_iv_atm_decay) or _iv_atm_decay <= 0:
-            st.warning("IV non disponibile per lo strike ATM di questa scadenza (Settle non invertibile): impossibile calcolare il decadimento.")
-        elif _dte_max <= 0:
-            st.info("Questa scadenza è già a 0 giorni residui (o scaduta): nessuna curva di decadimento da mostrare.")
-        else:
-            col_d1, col_d2, col_d3 = st.columns(3)
-            col_d1.metric("Strike ATM", f"{_atm_strike:,.0f}")
-            col_d2.metric("IV usata (fissa)", f"{_iv_atm_decay:.2%}")
-            col_d3.metric("Giorni residui oggi", f"{_dte_max}")
-
-            _giorni = np.linspace(_dte_max, 0, 60)
-            _prezzi_call = [_bs_price(spot_price, _atm_strike, max(g / 365.25, 1e-6),
-                                       risk_free_rate, dividend_yield, _iv_atm_decay, 'Call') for g in _giorni]
-            _prezzi_put = [_bs_price(spot_price, _atm_strike, max(g / 365.25, 1e-6),
-                                      risk_free_rate, dividend_yield, _iv_atm_decay, 'Put') for g in _giorni]
-
-            _fig_decay = go.Figure()
-            _fig_decay.add_trace(go.Scatter(
-                x=_giorni, y=_prezzi_call, mode='lines', name='Call ATM', line=dict(color='#34d399', width=2.5),
-                hovertemplate='%{x:.1f} giorni residui<br>Call: %{y:,.2f}<extra></extra>'
-            ))
-            _fig_decay.add_trace(go.Scatter(
-                x=_giorni, y=_prezzi_put, mode='lines', name='Put ATM', line=dict(color='#f87171', width=2.5),
-                hovertemplate='%{x:.1f} giorni residui<br>Put: %{y:,.2f}<extra></extra>'
-            ))
-            _fig_decay.update_xaxes(title="Giorni alla scadenza", autorange='reversed')
-            _fig_decay.update_yaxes(title="Prezzo teorico (Black-Scholes)")
-            _fig_decay.update_layout(template='plotly_dark', height=450, margin=dict(l=10, r=10, t=30, b=10),
-                                      hovermode='x unified')
-            st.plotly_chart(_fig_decay, width="stretch", key="decay_chart")
-            st.caption(
-                f"Curva calcolata con spot {spot_price:,.2f} e IV {_iv_atm_decay:.2%} tenuti fissi ai valori "
-                f"odierni — solo il tempo residuo cambia, da {_dte_max} giorni a 0."
-            )
-
-            with st.expander("📋 Vedi in forma tabellare (giorni interi)", expanded=False):
-                _giorni_interi = list(range(_dte_max, -1, -1))
-                _tabella_decay = []
-                for g in _giorni_interi:
-                    T = max(g / 365.25, 1e-6)
-                    _c = _bs_price(spot_price, _atm_strike, T, risk_free_rate, dividend_yield, _iv_atm_decay, 'Call')
-                    _p = _bs_price(spot_price, _atm_strike, T, risk_free_rate, dividend_yield, _iv_atm_decay, 'Put')
-                    _tabella_decay.append({'Giorni residui': g, 'Call ATM': round(_c, 2), 'Put ATM': round(_p, 2)})
-                st.dataframe(pd.DataFrame(_tabella_decay), width="stretch", hide_index=True)
-
-    # ========================= TAB RIPARTIZIONE OI =========================
-    with tab_ripart:
-        st.header(f"Ripartizione OI — {selected_expiry_label}")
-
-        with st.expander("ℹ️ Come leggere questa sezione", expanded=False):
-            st.markdown(
-                """
-**Cosa mostra.** Per ogni strike di questa scadenza, l'Open Interest di Put (blu) e
-Call (arancio) come barre, più due linee cumulate in percentuale:
-
-- **Ripart. Put** (grigia): quanta % dell'OI Put totale si trova a strike **minori o
-  uguali** a quello indicato, salendo da sinistra verso destra (parte vicino a 0%,
-  arriva al 100% allo strike più alto con OI put).
-- **Ripart. Call** (gialla): quanta % dell'OI Call totale si trova a strike
-  **maggiori o uguali** a quello indicato, quindi scende da sinistra verso destra
-  (parte vicino al 100%, arriva verso 0% allo strike più alto).
-
-**Il punto di Equilibrio.** È lo strike dove le due linee si incrociano: da un lato
-la "massa" cumulata di Put sale, dall'altro la "massa" cumulata di Call scende — il
-punto di incrocio è dove le due si bilanciano. Non ha lo stesso significato del Max
-Pain o del Gamma Flip: è un indicatore distinto, utile come ulteriore riferimento.
-
-**⚠️ Attenzione.** Qui si guarda **tutta** la catena della scadenza (non solo la
-fascia vicina allo spot come nei Wall), quindi include anche OI molto lontano dai
-soldi (deep ITM/OTM) — utile per la forma complessiva della distribuzione, meno per
-decisioni operative di brevissimo termine.
-                """
-            )
-
-        _df_rip = df_selected_expiry_oi[['Strike', 'Type', 'OI']].groupby(['Strike', 'Type'], as_index=False)['OI'].sum()
-        _pivot_rip = _df_rip.pivot(index='Strike', columns='Type', values='OI').fillna(0).sort_index()
-        if 'Put' not in _pivot_rip.columns:
-            _pivot_rip['Put'] = 0.0
-        if 'Call' not in _pivot_rip.columns:
-            _pivot_rip['Call'] = 0.0
-
-        _tot_put = _pivot_rip['Put'].sum()
-        _tot_call = _pivot_rip['Call'].sum()
-        _tot_oi_rip = _tot_put + _tot_call
-
-        if _tot_oi_rip == 0:
-            st.warning("Nessun Open Interest disponibile su questa scadenza: impossibile calcolare la ripartizione.")
-        else:
-            _pivot_rip['ripart_put'] = (_pivot_rip['Put'].cumsum() / _tot_put * 100) if _tot_put > 0 else 0.0
-            _pivot_rip['ripart_call'] = (_pivot_rip['Call'][::-1].cumsum()[::-1] / _tot_call * 100) if _tot_call > 0 else 0.0
-
-            _idx_equilibrio = None
-            for _i in range(len(_pivot_rip)):
-                if _pivot_rip['ripart_put'].iloc[_i] >= _pivot_rip['ripart_call'].iloc[_i]:
-                    _idx_equilibrio = _i
-                    break
-            _strike_equilibrio = _pivot_rip.index[_idx_equilibrio] if _idx_equilibrio is not None else None
-            _pct_equilibrio = _pivot_rip['ripart_put'].iloc[_idx_equilibrio] if _idx_equilibrio is not None else None
-
-            col_r1, col_r2, col_r3, col_r4 = st.columns(4)
-            col_r1.metric("OI Totale", f"{_tot_oi_rip:,.0f}")
-            col_r2.metric("Put", f"{_tot_put:,.0f} ({_tot_put/_tot_oi_rip:.1%})")
-            col_r3.metric("Call", f"{_tot_call:,.0f} ({_tot_call/_tot_oi_rip:.1%})")
-            col_r4.metric("Equilibrio", f"{_strike_equilibrio:,.0f} ({_pct_equilibrio:.1f}%)" if _strike_equilibrio is not None else "N/A")
-
-            _fig_rip = make_subplots(specs=[[{"secondary_y": True}]])
-            _fig_rip.add_trace(go.Bar(x=_pivot_rip.index, y=_pivot_rip['Put'], name='PUT',
-                                       marker_color='#60a5fa', opacity=0.75), secondary_y=False)
-            _fig_rip.add_trace(go.Bar(x=_pivot_rip.index, y=_pivot_rip['Call'], name='CALL',
-                                       marker_color='#f97316', opacity=0.75), secondary_y=False)
-            _fig_rip.add_trace(go.Scatter(x=_pivot_rip.index, y=_pivot_rip['ripart_put'], name='Ripart. Put',
-                                           mode='lines+markers', line=dict(color='#9ca3af', width=2),
-                                           marker=dict(size=4)), secondary_y=True)
-            _fig_rip.add_trace(go.Scatter(x=_pivot_rip.index, y=_pivot_rip['ripart_call'], name='Ripart. Call',
-                                           mode='lines+markers', line=dict(color='#fde047', width=2),
-                                           marker=dict(size=4)), secondary_y=True)
-            if _strike_equilibrio is not None:
-                _fig_rip.add_vline(x=_strike_equilibrio, line_dash='dash', line_color='#ef4444')
-            _fig_rip.update_yaxes(title_text="Open Interest", secondary_y=False)
-            _fig_rip.update_yaxes(title_text="Ripartizione %", secondary_y=True, range=[0, 100])
-            _fig_rip.update_xaxes(title_text="Strike")
-            _fig_rip.update_layout(template='plotly_dark', height=550, margin=dict(l=10, r=10, t=30, b=10),
-                                    barmode='overlay', hovermode='x unified',
-                                    legend=dict(orientation='h', yanchor='bottom', y=1.02))
-            st.plotly_chart(_fig_rip, width="stretch", key="ripartizione_chart")
-
-            with st.expander("📋 Vedi in forma tabellare", expanded=False):
-                _tabella_rip = _pivot_rip.reset_index()[['Strike', 'Put', 'Call', 'ripart_put', 'ripart_call']]
-                _tabella_rip.columns = ['Strike', 'OI Put', 'OI Call', 'Ripart. Put %', 'Ripart. Call %']
-                st.dataframe(_tabella_rip.round(1), width="stretch", hide_index=True)
-
-
 
 
 

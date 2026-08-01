@@ -204,6 +204,7 @@ def log_significant_volume_events_live(df_raw, spot_price, contract_multiplier, 
         existing['stato_conferma'] = existing['stato_conferma'].astype(object).fillna('in attesa')
         existing['significativo'] = existing['significativo'].astype(object).where(existing['significativo'].notna(), True)
         existing['ora'] = existing['ora'].astype(object).fillna('')
+        existing['nota'] = existing['nota'].astype(object).fillna('')
     else:
         existing = pd.DataFrame(columns=_LOG_COLS)
 
@@ -223,6 +224,7 @@ def log_significant_volume_events_live(df_raw, spot_price, contract_multiplier, 
     new_rows['significativo'] = True
     new_rows['spot_preciso'] = np.nan
     new_rows['oi_giorno_precedente'] = np.nan
+    new_rows['nota'] = ''
     new_rows['delta_oi'] = np.nan
     new_rows = new_rows[_LOG_COLS]
 

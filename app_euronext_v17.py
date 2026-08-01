@@ -321,10 +321,10 @@ if df_raw is not None and spot_price > 0:
         dex_metrics      = calculate_dex_metrics(df_selected_expiry_oi, spot_price)
         vex_metrics      = calculate_vex_metrics(df_selected_expiry_oi, spot_price, risk_free_rate, dividend_yield)
 
-    tab_summary, tab_gex, tab_vex_dex, tab_oi_vol, tab_stats, tab_vol_surf, tab_eventi, tab_storico, tab_note, tab_decay, tab_ripart = st.tabs([
+    tab_summary, tab_gex, tab_vex_dex, tab_oi_vol, tab_stats, tab_vol_surf, tab_eventi, tab_storico, tab_note, tab_decay = st.tabs([
         '📋 Summary', '📊 Gamma (GEX)', '🧩 Vanna & Delta (VEX/DEX)',
         '🎯 Support/Res (OI & Vol)', '📉 Stats', '📈 Vol Surface', '📋 Eventi Volume',
-        '📈 Andamento Storico', '📝 Note', '⏳ Decadimento', '⚖️ Ripartizione OI'
+        '📈 Andamento Storico', '📝 Note', '⏳ Decadimento'
     ])
 
     # ========================= TAB SUMMARY =========================
@@ -412,23 +412,6 @@ if df_raw is not None and spot_price > 0:
             st.plotly_chart(create_volume_profile_chart(
                 vol_metrics['df_vol_profile'], spot_price, selected_expiry_label
             ), width="stretch", key="summary_vol")
-
-        st.divider()
-        with st.expander("📄 Dati opzione in forma tabellare (questa scadenza)", expanded=False):
-            _colonne_tabella = ['Strike', 'Type', 'Settle', 'Vol', 'OI', 'Delta', 'Gamma', 'IV', 'Moneyness']
-            _tabella_dati = df_selected_expiry[_colonne_tabella].copy().sort_values('Strike').reset_index(drop=True)
-            _tabella_dati.columns = ['Strike', 'Tipo', 'Settle', 'Volume', 'OI', 'Delta', 'Gamma', 'IV', 'Moneyness']
-            st.dataframe(
-                _tabella_dati.style.format({
-                    'Settle': '{:.2f}', 'Delta': '{:.3f}', 'Gamma': '{:.5f}',
-                    'IV': '{:.2%}', 'Moneyness': '{:.3f}'
-                }),
-                width="stretch", hide_index=True
-            )
-            st.caption(
-                "Tutti gli strike di questa scadenza (anche con OI/Volume a zero). Delta/Gamma/IV sono "
-                "stime via Black-Scholes, non dati di mercato osservati."
-            )
 
     # ========================= TAB GEX =========================
     with tab_gex:
@@ -713,7 +696,6 @@ file caricato), così non restano in mezzo scadenze ormai concluse.
                     _log_df[_col] = _default
             _log_df['significativo'] = _log_df['significativo'].astype(object).where(_log_df['significativo'].notna(), True)
             _log_df['ora'] = _log_df['ora'].astype(object).fillna('')
-            _log_df['nota'] = _log_df['nota'].astype(object).fillna('')
 
         if _log_df is None or _log_df.empty:
             st.info("Nessun log ancora creato: premi 'Registra eventi di questo file nel log' qui sopra.")
@@ -1003,104 +985,6 @@ si consuma sempre più in fretta — non in modo lineare.
                 f"Curva calcolata con spot {spot_price:,.2f} e IV {_iv_atm_decay:.2%} tenuti fissi ai valori "
                 f"odierni — solo il tempo residuo cambia, da {_dte_max} giorni a 0."
             )
-
-            with st.expander("📋 Vedi in forma tabellare (giorni interi)", expanded=False):
-                _giorni_interi = list(range(_dte_max, -1, -1))
-                _tabella_decay = []
-                for g in _giorni_interi:
-                    T = max(g / 365.25, 1e-6)
-                    _c = _bs_price(spot_price, _atm_strike, T, risk_free_rate, dividend_yield, _iv_atm_decay, 'Call')
-                    _p = _bs_price(spot_price, _atm_strike, T, risk_free_rate, dividend_yield, _iv_atm_decay, 'Put')
-                    _tabella_decay.append({'Giorni residui': g, 'Call ATM': round(_c, 2), 'Put ATM': round(_p, 2)})
-                st.dataframe(pd.DataFrame(_tabella_decay), width="stretch", hide_index=True)
-
-    # ========================= TAB RIPARTIZIONE OI =========================
-    with tab_ripart:
-        st.header(f"Ripartizione OI — {selected_expiry_label}")
-
-        with st.expander("ℹ️ Come leggere questa sezione", expanded=False):
-            st.markdown(
-                """
-**Cosa mostra.** Per ogni strike di questa scadenza, l'Open Interest di Put (blu) e
-Call (arancio) come barre, più due linee cumulate in percentuale:
-
-- **Ripart. Put** (grigia): quanta % dell'OI Put totale si trova a strike **minori o
-  uguali** a quello indicato, salendo da sinistra verso destra (parte vicino a 0%,
-  arriva al 100% allo strike più alto con OI put).
-- **Ripart. Call** (gialla): quanta % dell'OI Call totale si trova a strike
-  **maggiori o uguali** a quello indicato, quindi scende da sinistra verso destra
-  (parte vicino al 100%, arriva verso 0% allo strike più alto).
-
-**Il punto di Equilibrio.** È lo strike dove le due linee si incrociano: da un lato
-la "massa" cumulata di Put sale, dall'altro la "massa" cumulata di Call scende — il
-punto di incrocio è dove le due si bilanciano. Non ha lo stesso significato del Max
-Pain o del Gamma Flip: è un indicatore distinto, utile come ulteriore riferimento.
-
-**⚠️ Attenzione.** Qui si guarda **tutta** la catena della scadenza (non solo la
-fascia vicina allo spot come nei Wall), quindi include anche OI molto lontano dai
-soldi (deep ITM/OTM) — utile per la forma complessiva della distribuzione, meno per
-decisioni operative di brevissimo termine.
-                """
-            )
-
-        _df_rip = df_selected_expiry_oi[['Strike', 'Type', 'OI']].groupby(['Strike', 'Type'], as_index=False)['OI'].sum()
-        _pivot_rip = _df_rip.pivot(index='Strike', columns='Type', values='OI').fillna(0).sort_index()
-        if 'Put' not in _pivot_rip.columns:
-            _pivot_rip['Put'] = 0.0
-        if 'Call' not in _pivot_rip.columns:
-            _pivot_rip['Call'] = 0.0
-
-        _tot_put = _pivot_rip['Put'].sum()
-        _tot_call = _pivot_rip['Call'].sum()
-        _tot_oi_rip = _tot_put + _tot_call
-
-        if _tot_oi_rip == 0:
-            st.warning("Nessun Open Interest disponibile su questa scadenza: impossibile calcolare la ripartizione.")
-        else:
-            _pivot_rip['ripart_put'] = (_pivot_rip['Put'].cumsum() / _tot_put * 100) if _tot_put > 0 else 0.0
-            _pivot_rip['ripart_call'] = (_pivot_rip['Call'][::-1].cumsum()[::-1] / _tot_call * 100) if _tot_call > 0 else 0.0
-
-            _idx_equilibrio = None
-            for _i in range(len(_pivot_rip)):
-                if _pivot_rip['ripart_put'].iloc[_i] >= _pivot_rip['ripart_call'].iloc[_i]:
-                    _idx_equilibrio = _i
-                    break
-            _strike_equilibrio = _pivot_rip.index[_idx_equilibrio] if _idx_equilibrio is not None else None
-            _pct_equilibrio = _pivot_rip['ripart_put'].iloc[_idx_equilibrio] if _idx_equilibrio is not None else None
-
-            col_r1, col_r2, col_r3, col_r4 = st.columns(4)
-            col_r1.metric("OI Totale", f"{_tot_oi_rip:,.0f}")
-            col_r2.metric("Put", f"{_tot_put:,.0f} ({_tot_put/_tot_oi_rip:.1%})")
-            col_r3.metric("Call", f"{_tot_call:,.0f} ({_tot_call/_tot_oi_rip:.1%})")
-            col_r4.metric("Equilibrio", f"{_strike_equilibrio:,.0f} ({_pct_equilibrio:.1f}%)" if _strike_equilibrio is not None else "N/A")
-
-            _fig_rip = make_subplots(specs=[[{"secondary_y": True}]])
-            _fig_rip.add_trace(go.Bar(x=_pivot_rip.index, y=_pivot_rip['Put'], name='PUT',
-                                       marker_color='#60a5fa', opacity=0.75), secondary_y=False)
-            _fig_rip.add_trace(go.Bar(x=_pivot_rip.index, y=_pivot_rip['Call'], name='CALL',
-                                       marker_color='#f97316', opacity=0.75), secondary_y=False)
-            _fig_rip.add_trace(go.Scatter(x=_pivot_rip.index, y=_pivot_rip['ripart_put'], name='Ripart. Put',
-                                           mode='lines+markers', line=dict(color='#9ca3af', width=2),
-                                           marker=dict(size=4)), secondary_y=True)
-            _fig_rip.add_trace(go.Scatter(x=_pivot_rip.index, y=_pivot_rip['ripart_call'], name='Ripart. Call',
-                                           mode='lines+markers', line=dict(color='#fde047', width=2),
-                                           marker=dict(size=4)), secondary_y=True)
-            if _strike_equilibrio is not None:
-                _fig_rip.add_vline(x=_strike_equilibrio, line_dash='dash', line_color='#ef4444')
-            _fig_rip.update_yaxes(title_text="Open Interest", secondary_y=False)
-            _fig_rip.update_yaxes(title_text="Ripartizione %", secondary_y=True, range=[0, 100])
-            _fig_rip.update_xaxes(title_text="Strike")
-            _fig_rip.update_layout(template='plotly_dark', height=550, margin=dict(l=10, r=10, t=30, b=10),
-                                    barmode='overlay', hovermode='x unified',
-                                    legend=dict(orientation='h', yanchor='bottom', y=1.02))
-            st.plotly_chart(_fig_rip, width="stretch", key="ripartizione_chart")
-
-            with st.expander("📋 Vedi in forma tabellare", expanded=False):
-                _tabella_rip = _pivot_rip.reset_index()[['Strike', 'Put', 'Call', 'ripart_put', 'ripart_call']]
-                _tabella_rip.columns = ['Strike', 'OI Put', 'OI Call', 'Ripart. Put %', 'Ripart. Call %']
-                st.dataframe(_tabella_rip.round(1), width="stretch", hide_index=True)
-
-
 
 
 
