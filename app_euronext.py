@@ -22,7 +22,8 @@ from plotly.subplots import make_subplots
 from euronext_module import (
     parse_euronext_text, enrich_with_greeks, log_significant_volume_events,
     reconcile_log, update_log_fields, log_totali_giornalieri, ricostruisci_storico_totali,
-    aggiungi_nota_diario, elimina_nota_diario, modifica_nota_diario, _bs_price
+    aggiungi_nota_diario, elimina_nota_diario, modifica_nota_diario, _bs_price,
+    estimate_iv_multi_day_batch
 )
 from calculations_module import (
     calculate_gex_metrics, calculate_oi_walls, calculate_max_pain,
@@ -272,6 +273,7 @@ if df_raw is not None and spot_price > 0:
 
     unique_expirations = sorted(df_raw['Expiration Date'].dropna().unique())
     _WEEKDAYS_EN = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+    _WEEKDAYS_IT = ['Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab', 'Dom']
 
     def _expiry_label(d):
         ts = pd.Timestamp(d)
@@ -972,76 +974,167 @@ ordini di grandezza più alto: sullo stesso asse il Volume sparirebbe schiacciat
                 """
 **In parole semplici.** Un'opzione perde valore man mano che passa il tempo, anche se
 il sottostante restasse fermo — è il cosiddetto *decadimento temporale* (Theta). Questo
-grafico mostra come varierebbe il prezzo teorico dello strike **più vicino allo spot**
-(ATM) di questa scadenza, giorno dopo giorno, fino alla scadenza stessa.
+grafico mostra come varierebbe il prezzo teorico dello strike **scelto qui sotto** (di
+default il più vicino allo spot, ATM), giorno dopo giorno, fino alla scadenza stessa.
 
 **⚠️ È una stima "a condizioni ferme", non una previsione.** Il calcolo tiene **fissi**
-lo spot e la volatilità implicita ai valori di oggi, e fa variare solo il tempo residuo.
-Nella realtà spot e volatilità si muoveranno, quindi il prezzo reale seguirà una strada
-diversa da questa curva — è utile per farsi un'idea della *forma* del decadimento
-(tipicamente si accelera avvicinandosi alla scadenza), non per prevedere il prezzo esatto
-di un giorno specifico.
+lo spot e la volatilità implicita, e fa variare solo il tempo residuo. Nella realtà
+spot e volatilità si muoveranno, quindi il prezzo reale seguirà una strada diversa da
+questa curva — è utile per farsi un'idea della *forma* del decadimento (tipicamente si
+accelera avvicinandosi alla scadenza), non per prevedere il prezzo esatto di un giorno
+specifico.
 
-**Perché la curva accelera vicino alla scadenza.** Il valore residuo di un'opzione ATM
-è quasi tutto "valore tempo" (nessun valore intrinseco): più ci si avvicina alla
-scadenza, meno tempo resta perché il sottostante si muova a favore, quindi il valore
-si consuma sempre più in fretta — non in modo lineare.
+**🎯 Stima IV robusta su più giorni.** Il Settle di un singolo giorno può risultare
+anomalo (fuori dai limiti di no-arbitraggio) senza che lo strike sia davvero illiquido.
+Per ridurlo, la IV usata qui è la **mediana** delle IV valide trovate tra oggi e gli
+ultimi file disponibili in `dati/` per lo stesso strike (fino a 5 giorni, richiesti
+almeno 3 validi) — Call e Put calcolate **separatamente**, perché possono avere skew
+diverso. Se i giorni validi non bastano, si usa la sola IV di oggi (se disponibile).
+La tabella di riepilogo qui sotto mostra questo colpo d'occhio per **tutti** gli strike
+della scadenza insieme, non solo per quello selezionato per il grafico.
+
+**⚠️ Nota.** Questo tab **non richiede l'Open Interest**: funziona anche su un
+caricamento intraday, perché si basa solo su Settle (oggi e nei giorni precedenti) e
+sullo spot storico.
                 """
             )
 
-        if not _oi_disponibile:
-            st.info("⏳ Open Interest non ancora disponibile per questa scadenza (probabile intraday): questa sezione richiede l'OI per calcolare le metriche. Riprova più tardi o scegli una scadenza con OI disponibile.")
+        _strikes_disponibili = sorted(df_selected_expiry['Strike'].unique())
+        if not _strikes_disponibili:
+            st.warning("Nessuno strike disponibile per questa scadenza.")
         else:
-            _atm_idx = (df_selected_expiry_oi['Strike'] - spot_price).abs().idxmin()
-            _atm_strike = df_selected_expiry_oi.loc[_atm_idx, 'Strike']
-            _atm_rows = df_selected_expiry_oi[df_selected_expiry_oi['Strike'] == _atm_strike]
-            _iv_atm_decay = _atm_rows['IV'].mean()
-            _dte_max = int(df_selected_expiry_oi['DTE_Days'].iloc[0])
+            # Stima IV robusta per TUTTI gli strike/tipo in un solo passaggio sui file
+            # storici (piu' efficiente che richiamarla strike per strike).
+            _iv_oggi_map = {}
+            for _k in _strikes_disponibili:
+                for _t in ['Call', 'Put']:
+                    _row = df_selected_expiry[(df_selected_expiry['Strike'] == _k) & (df_selected_expiry['Type'] == _t)]
+                    _iv_oggi_map[(_k, _t)] = _row['IV'].iloc[0] if not _row.empty else None
 
-            if pd.isna(_iv_atm_decay) or _iv_atm_decay <= 0:
-                st.warning("IV non disponibile per lo strike ATM di questa scadenza (Settle non invertibile): impossibile calcolare il decadimento.")
-            elif _dte_max <= 0:
-                st.info("Questa scadenza è già a 0 giorni residui (o scaduta): nessuna curva di decadimento da mostrare.")
-            else:
-                col_d1, col_d2, col_d3 = st.columns(3)
-                col_d1.metric("Strike ATM", f"{_atm_strike:,.0f}")
-                col_d2.metric("IV usata (fissa)", f"{_iv_atm_decay:.2%}")
-                col_d3.metric("Giorni residui oggi", f"{_dte_max}")
+            _tabella_stime = estimate_iv_multi_day_batch(
+                oggi_date=analysis_date.date(), iv_oggi_map=_iv_oggi_map,
+                dati_folder=DATI_FOLDER_DEFAULT, storico_totali_path=TOTALI_LOG_PATH,
+                expiration_date=selected_expiry_date, strikes=_strikes_disponibili,
+                risk_free_rate=risk_free_rate, dividend_yield=dividend_yield,
+                index_prices_path=percorso_prezzi, n_giorni=5, min_validi=3
+            )
 
-                _giorni = np.linspace(_dte_max, 0, 60)
-                _prezzi_call = [_bs_price(spot_price, _atm_strike, max(g / 365.25, 1e-6),
-                                           risk_free_rate, dividend_yield, _iv_atm_decay, 'Call') for g in _giorni]
-                _prezzi_put = [_bs_price(spot_price, _atm_strike, max(g / 365.25, 1e-6),
-                                          risk_free_rate, dividend_yield, _iv_atm_decay, 'Put') for g in _giorni]
+            def _iv_finale_e_fonte(strike, tipo):
+                _stima = _tabella_stime[(strike, tipo)]
+                _iv_oggi = _iv_oggi_map[(strike, tipo)]
+                if _stima['iv_mediana'] is not None:
+                    return _stima['iv_mediana'], "mediana su più giorni", _stima
+                if _iv_oggi is not None and not pd.isna(_iv_oggi) and _iv_oggi > 0:
+                    return float(_iv_oggi), "solo oggi (dati storici insufficienti)", _stima
+                return None, "non disponibile", _stima
 
-                _fig_decay = go.Figure()
-                _fig_decay.add_trace(go.Scatter(
-                    x=_giorni, y=_prezzi_call, mode='lines', name='Call ATM', line=dict(color='#34d399', width=2.5),
-                    hovertemplate='%{x:.1f} giorni residui<br>Call: %{y:,.2f}<extra></extra>'
-                ))
-                _fig_decay.add_trace(go.Scatter(
-                    x=_giorni, y=_prezzi_put, mode='lines', name='Put ATM', line=dict(color='#f87171', width=2.5),
-                    hovertemplate='%{x:.1f} giorni residui<br>Put: %{y:,.2f}<extra></extra>'
-                ))
-                _fig_decay.update_xaxes(title="Giorni alla scadenza", autorange='reversed')
-                _fig_decay.update_yaxes(title="Prezzo teorico (Black-Scholes)")
-                _fig_decay.update_layout(template='plotly_dark', height=450, margin=dict(l=10, r=10, t=30, b=10),
-                                          hovermode='x unified')
-                st.plotly_chart(_fig_decay, width="stretch", key="decay_chart")
+            with st.expander("📋 Colpo d'occhio: stima IV per tutti gli strike di questa scadenza", expanded=False):
+                _righe_riepilogo = []
+                for _k in _strikes_disponibili:
+                    _iv_c, _fonte_c, _stima_c = _iv_finale_e_fonte(_k, 'Call')
+                    _iv_p, _fonte_p, _stima_p = _iv_finale_e_fonte(_k, 'Put')
+                    _righe_riepilogo.append({
+                        'Strike': _k,
+                        'IV Call': f"{_iv_c:.2%}" if _iv_c is not None else "N/A",
+                        'Fonte Call': _fonte_c,
+                        'Giorni validi Call': f"{_stima_c['n_validi']}/{_stima_c['n_esaminati']}",
+                        'IV Put': f"{_iv_p:.2%}" if _iv_p is not None else "N/A",
+                        'Fonte Put': _fonte_p,
+                        'Giorni validi Put': f"{_stima_p['n_validi']}/{_stima_p['n_esaminati']}",
+                    })
+                st.dataframe(pd.DataFrame(_righe_riepilogo), width="stretch", hide_index=True)
                 st.caption(
-                    f"Curva calcolata con spot {spot_price:,.2f} e IV {_iv_atm_decay:.2%} tenuti fissi ai valori "
-                    f"odierni — solo il tempo residuo cambia, da {_dte_max} giorni a 0."
+                    "'Giorni validi' = quante IV utilizzabili trovate sui giorni esaminati (max 5, oggi incluso). "
+                    "Sotto 3 giorni validi la stima passa alla sola IV di oggi, se disponibile."
                 )
 
-                with st.expander("📋 Vedi in forma tabellare (giorni interi)", expanded=False):
-                    _giorni_interi = list(range(_dte_max, -1, -1))
-                    _tabella_decay = []
-                    for g in _giorni_interi:
-                        T = max(g / 365.25, 1e-6)
-                        _c = _bs_price(spot_price, _atm_strike, T, risk_free_rate, dividend_yield, _iv_atm_decay, 'Call')
-                        _p = _bs_price(spot_price, _atm_strike, T, risk_free_rate, dividend_yield, _iv_atm_decay, 'Put')
-                        _tabella_decay.append({'Giorni residui': g, 'Call ATM': round(_c, 2), 'Put ATM': round(_p, 2)})
-                    st.dataframe(pd.DataFrame(_tabella_decay), width="stretch", hide_index=True)
+            _idx_atm_default = min(
+                range(len(_strikes_disponibili)),
+                key=lambda i: abs(_strikes_disponibili[i] - spot_price)
+            )
+            _strike_scelto = st.selectbox(
+                "Strike da analizzare nel grafico (default: più vicino allo spot)",
+                options=_strikes_disponibili, index=_idx_atm_default,
+                format_func=lambda k: f"{k:,.0f}", key="decay_strike_select"
+            )
+
+            _dte_max = int(df_selected_expiry.loc[df_selected_expiry['Strike'] == _strike_scelto, 'DTE_Days'].iloc[0])
+
+            if _dte_max <= 0:
+                st.info("Questa scadenza è già a 0 giorni residui (o scaduta): nessuna curva di decadimento da mostrare.")
+            else:
+                _iv_call, _fonte_call, _stima_call = _iv_finale_e_fonte(_strike_scelto, 'Call')
+                _iv_put, _fonte_put, _stima_put = _iv_finale_e_fonte(_strike_scelto, 'Put')
+
+                if _iv_call is None and _iv_put is None:
+                    st.warning(
+                        "IV non disponibile per questo strike né oggi né nei giorni precedenti in `dati/`: "
+                        "impossibile calcolare il decadimento. Prova un altro strike."
+                    )
+                else:
+                    col_d1, col_d2, col_d3 = st.columns(3)
+                    col_d1.metric("Strike", f"{_strike_scelto:,.0f}")
+                    col_d2.metric("IV Call usata", f"{_iv_call:.2%}" if _iv_call else "N/A", help=_fonte_call)
+                    col_d3.metric("IV Put usata", f"{_iv_put:.2%}" if _iv_put else "N/A", help=_fonte_put)
+                    st.caption(
+                        f"Call: {_fonte_call} ({_stima_call['n_validi']}/{_stima_call['n_esaminati']} giorni validi). "
+                        f"Put: {_fonte_put} ({_stima_put['n_validi']}/{_stima_put['n_esaminati']} giorni validi)."
+                    )
+
+                    with st.expander("📋 Dettaglio giorni usati per la stima (strike selezionato)", expanded=False):
+                        for _tipo, _stima in [('Call', _stima_call), ('Put', _stima_put)]:
+                            st.markdown(f"**{_tipo}**")
+                            _df_det = pd.DataFrame([
+                                {
+                                    'Data': f"{d.strftime('%d/%m/%Y')} ({_WEEKDAYS_IT[d.weekday()]})",
+                                    'IV': f"{iv:.2%}" if iv is not None else "n/d (Settle non invertibile o giorno mancante)"
+                                }
+                                for d, iv in _stima['dettaglio']
+                            ])
+                            st.dataframe(_df_det, width="stretch", hide_index=True)
+                        st.caption(
+                            "Sabati, domeniche e festivi non hanno un file in `dati/`: è normale che i giorni "
+                            "esaminati non siano consecutivi sul calendario."
+                        )
+
+                    _giorni = np.linspace(_dte_max, 0, 60)
+                    _fig_decay = go.Figure()
+                    if _iv_call is not None:
+                        _prezzi_call = [_bs_price(spot_price, _strike_scelto, max(g / 365.25, 1e-6),
+                                                   risk_free_rate, dividend_yield, _iv_call, 'Call') for g in _giorni]
+                        _fig_decay.add_trace(go.Scatter(
+                            x=_giorni, y=_prezzi_call, mode='lines', name='Call', line=dict(color='#34d399', width=2.5),
+                            hovertemplate='%{x:.1f} giorni residui<br>Call: %{y:,.2f}<extra></extra>'
+                        ))
+                    if _iv_put is not None:
+                        _prezzi_put = [_bs_price(spot_price, _strike_scelto, max(g / 365.25, 1e-6),
+                                                  risk_free_rate, dividend_yield, _iv_put, 'Put') for g in _giorni]
+                        _fig_decay.add_trace(go.Scatter(
+                            x=_giorni, y=_prezzi_put, mode='lines', name='Put', line=dict(color='#f87171', width=2.5),
+                            hovertemplate='%{x:.1f} giorni residui<br>Put: %{y:,.2f}<extra></extra>'
+                        ))
+                    _fig_decay.update_xaxes(title="Giorni alla scadenza", autorange='reversed')
+                    _fig_decay.update_yaxes(title="Prezzo teorico (Black-Scholes)")
+                    _fig_decay.update_layout(template='plotly_dark', height=450, margin=dict(l=10, r=10, t=30, b=10),
+                                              hovermode='x unified')
+                    st.plotly_chart(_fig_decay, width="stretch", key="decay_chart")
+                    st.caption(
+                        f"Curva calcolata con spot {spot_price:,.2f} tenuto fisso al valore odierno — solo il "
+                        f"tempo residuo cambia, da {_dte_max} giorni a 0. Strike {_strike_scelto:,.0f}."
+                    )
+
+                    with st.expander("📋 Vedi in forma tabellare (giorni interi)", expanded=False):
+                        _giorni_interi = list(range(_dte_max, -1, -1))
+                        _tabella_decay = []
+                        for g in _giorni_interi:
+                            T = max(g / 365.25, 1e-6)
+                            _riga = {'Giorni residui': g}
+                            if _iv_call is not None:
+                                _riga['Call'] = round(_bs_price(spot_price, _strike_scelto, T, risk_free_rate, dividend_yield, _iv_call, 'Call'), 2)
+                            if _iv_put is not None:
+                                _riga['Put'] = round(_bs_price(spot_price, _strike_scelto, T, risk_free_rate, dividend_yield, _iv_put, 'Put'), 2)
+                            _tabella_decay.append(_riga)
+                        st.dataframe(pd.DataFrame(_tabella_decay), width="stretch", hide_index=True)
 
     # ========================= TAB RIPARTIZIONE OI =========================
     with tab_ripart:

@@ -534,6 +534,121 @@ def aggiungi_nota_diario(log_path, contesto, testo):
     return note
 
 
+def _load_spot_history(storico_totali_path, index_prices_path=None):
+    """
+    Costruisce {date: spot} unendo due fonti, con priorita' alla prima:
+    1) dati_locali/storico_totali.csv - spot inserito/registrato in-app per quella data
+       (piu' preciso quando disponibile, es. spot_preciso verificato a mano altrove).
+    2) CSV storico prezzi indice (es. INDEX_FTSEMIB_1D.csv) - copre anche le date in
+       cui storico_totali.csv non e' stato popolato (es. mai ricostruito, o file
+       arrivato in dati/ tramite ripara_file_dati.py/recupera_storico.py).
+    Ritorna dict vuoto per le fonti mancanti, mai solleva eccezioni.
+    """
+    spot_by_date = {}
+    if storico_totali_path and os.path.exists(storico_totali_path):
+        try:
+            df_s = pd.read_csv(storico_totali_path)
+            for _, row in df_s.iterrows():
+                try:
+                    d = pd.to_datetime(row['data']).date()
+                    if pd.notna(row.get('spot')):
+                        spot_by_date[d] = float(row['spot'])
+                except Exception:
+                    continue
+        except Exception:
+            pass
+    if index_prices_path and os.path.exists(index_prices_path):
+        try:
+            df_p = pd.read_csv(index_prices_path, parse_dates=['time'])
+            for _, row in df_p.iterrows():
+                d = row['time'].date()
+                if d not in spot_by_date:
+                    spot_by_date[d] = float(row['close'])
+        except Exception:
+            pass
+    return spot_by_date
+
+
+def estimate_iv_multi_day_batch(oggi_date, iv_oggi_map, dati_folder, storico_totali_path,
+                                 expiration_date, strikes, risk_free_rate, dividend_yield,
+                                 index_prices_path=None, n_giorni=5, min_validi=3):
+    """
+    Versione "tabellare" della stima IV robusta: calcola la mediana su piu' giorni per
+    TUTTI gli strike/tipo richiesti in un solo passaggio sui file storici (ogni file
+    in dati_folder viene aperto e parsato una sola volta, non una volta per strike -
+    utile per costruire una tabella di riepilogo su un'intera scadenza senza dover
+    riaprire gli stessi file decine di volte).
+
+    iv_oggi_map: dict {(strike, opt_type): iv_oggi_o_None} - IV di oggi gia' derivata
+    altrove (es. da df_selected_expiry enriched), una voce per ciascuna coppia
+    strike/tipo di interesse.
+    strikes: iterable degli strike da considerare (serve solo a limitare il parsing
+    dei file storici alle righe utili; le coppie effettive vengono da iv_oggi_map).
+
+    Motivazione: il Settle di un singolo giorno puo' essere anomalo (fuori dai limiti
+    di no-arbitraggio, quindi IV non invertibile quel giorno specifico) senza che lo
+    strike sia davvero illiquido - guardare piu' giorni e prendere la MEDIANA delle IV
+    valide e' piu' robusto del solo dato odierno.
+
+    Returns: dict {(strike, opt_type): {iv_mediana, n_validi, n_esaminati, dettaglio,
+    min_validi_richiesti}} - stessa struttura per ciascuna coppia presente in
+    iv_oggi_map. dettaglio e' una lista di (date, iv_o_None) dal piu' recente al piu'
+    vecchio.
+    """
+    candidati = {
+        key: [(oggi_date, iv if (iv is not None and not pd.isna(iv)) else None)]
+        for key, iv in iv_oggi_map.items()
+    }
+
+    files_by_date = _scan_dati_folder(dati_folder)
+    spot_by_date = _load_spot_history(storico_totali_path, index_prices_path)
+    prior_dates = sorted([d for d in files_by_date if d < oggi_date], reverse=True)
+    strikes_set = set(strikes)
+
+    giorni_usati = 1  # oggi e' gia' stato aggiunto sopra
+    for d in prior_dates:
+        if giorni_usati >= n_giorni:
+            break
+        try:
+            with open(files_by_date[d], encoding='utf-8-sig') as f:
+                df_day, _ = parse_euronext_text(f.read())
+        except Exception:
+            for key in candidati:
+                candidati[key].append((d, None))
+            giorni_usati += 1
+            continue
+
+        df_day = df_day[(df_day['Expiration Date'] == expiration_date) &
+                         (df_day['Strike'].isin(strikes_set))]
+        lookup_settle = {(row.Strike, row.Type): row.Settle for row in df_day.itertuples()}
+        spot_d = spot_by_date.get(d)
+
+        for key in candidati:
+            strike, opt_type = key
+            settle_d = lookup_settle.get((strike, opt_type))
+            if settle_d is None or pd.isna(settle_d) or spot_d is None or pd.isna(spot_d):
+                candidati[key].append((d, None))
+                continue
+            T = max((pd.Timestamp(expiration_date) - pd.Timestamp(d)).days / 365.25, MIN_T)
+            iv_d = _implied_vol(settle_d, spot_d, strike, T, risk_free_rate, dividend_yield, opt_type)
+            candidati[key].append((d, None if pd.isna(iv_d) else iv_d))
+
+        giorni_usati += 1
+
+    risultati = {}
+    for key, lista in candidati.items():
+        validi = [iv for _, iv in lista if iv is not None]
+        iv_mediana = float(np.median(validi)) if len(validi) >= min_validi else None
+        risultati[key] = {
+            'iv_mediana': iv_mediana,
+            'n_validi': len(validi),
+            'n_esaminati': len(lista),
+            'dettaglio': lista,
+            'min_validi_richiesti': min_validi,
+        }
+    return risultati
+
+
 def elimina_nota_diario(log_path, id_nota):
     """Rimuove una nota dal diario in base al suo id."""
     if not os.path.exists(log_path):
