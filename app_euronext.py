@@ -306,20 +306,31 @@ if df_raw is not None and spot_price > 0:
         )
 
     df_selected_expiry_oi = df_selected_expiry[df_selected_expiry['OI'] > 0].copy()
-    if df_selected_expiry_oi.empty:
-        st.error("Nessun Open Interest per questa scadenza: impossibile calcolare le metriche.")
-        st.stop()
+    # v1.2.0: niente più st.stop() qui. L'assenza di OI (tipico intraday, prima del
+    # calcolo di fine giornata) non deve bloccare TUTTA l'app: i tab che non dipendono
+    # dall'OI (Eventi Volume, Andamento Storico, Note, Vol Surface, Ripartizione OI)
+    # restano utilizzabili. Solo i tab che richiedono davvero l'OI mostrano un avviso
+    # locale, invece del vecchio blocco totale.
+    _oi_disponibile = not df_selected_expiry_oi.empty
+    if not _oi_disponibile:
+        st.warning(
+            "⏳ Nessun Open Interest per questa scadenza (probabile intraday, prima del calcolo di "
+            "fine giornata). Le tab basate su OI (Summary, Gamma/GEX, Vanna & Delta, Support/Res, "
+            "Stats) mostreranno un avviso al loro interno. Eventi Volume, Andamento Storico, Note, "
+            "Vol Surface e Ripartizione OI restano comunque disponibili."
+        )
 
-    with st.spinner("Calcolo metriche per la scadenza..."):
-        gex_metrics      = calculate_gex_metrics(df_selected_expiry_oi, spot_price, risk_free_rate, dividend_yield)
-        oi_metrics       = calculate_oi_walls(df_selected_expiry_oi, spot_price)
-        vol_metrics      = calculate_volume_profile(df_selected_expiry, spot_price)
-        activity_metrics = calculate_activity_ratio(df_selected_expiry, spot_price)
-        max_pain_strike, df_payouts = calculate_max_pain(df_selected_expiry_oi)
-        pc_ratios        = calculate_pc_ratios(df_selected_expiry_oi)
-        expected_move    = calculate_expected_move(df_selected_expiry_oi, spot_price)
-        dex_metrics      = calculate_dex_metrics(df_selected_expiry_oi, spot_price)
-        vex_metrics      = calculate_vex_metrics(df_selected_expiry_oi, spot_price, risk_free_rate, dividend_yield)
+    if _oi_disponibile:
+        with st.spinner("Calcolo metriche per la scadenza..."):
+            gex_metrics      = calculate_gex_metrics(df_selected_expiry_oi, spot_price, risk_free_rate, dividend_yield)
+            oi_metrics       = calculate_oi_walls(df_selected_expiry_oi, spot_price)
+            vol_metrics      = calculate_volume_profile(df_selected_expiry, spot_price)
+            activity_metrics = calculate_activity_ratio(df_selected_expiry, spot_price)
+            max_pain_strike, df_payouts = calculate_max_pain(df_selected_expiry_oi)
+            pc_ratios        = calculate_pc_ratios(df_selected_expiry_oi)
+            expected_move    = calculate_expected_move(df_selected_expiry_oi, spot_price)
+            dex_metrics      = calculate_dex_metrics(df_selected_expiry_oi, spot_price)
+            vex_metrics      = calculate_vex_metrics(df_selected_expiry_oi, spot_price, risk_free_rate, dividend_yield)
 
     tab_summary, tab_gex, tab_vex_dex, tab_oi_vol, tab_stats, tab_vol_surf, tab_eventi, tab_storico, tab_note, tab_decay, tab_ripart = st.tabs([
         '📋 Summary', '📊 Gamma (GEX)', '🧩 Vanna & Delta (VEX/DEX)',
@@ -349,86 +360,89 @@ if df_raw is not None and spot_price > 0:
                 """
             )
 
-        col1, col2, col3, col4, col5, col6 = st.columns(6)
-        col1.metric("Spot Price", f"{spot_price:.2f}")
-        _net_gex_m = gex_metrics['total_net_gex'] / 1_000_000
-        col2.metric(
-            "Net GEX (Scadenza)", f"€{_net_gex_m:.2f} M",
-            delta=f"{_net_gex_m:+.2f} M ({'SHORT γ' if _net_gex_m < 0 else 'LONG γ'})",
-            delta_color="inverse"
-        )
-        col3.metric("Net VEX (Scadenza)", f"€{vex_metrics['total_net_vex'] / 1_000:.2f} K")
-        col4.metric("🛡️ Put Wall", f"{oi_metrics['put_wall_strike']:.0f}" if oi_metrics['put_wall_strike'] else "N/A")
-        col5.metric("🛑 Call Wall", f"{oi_metrics['call_wall_strike']:.0f}" if oi_metrics['call_wall_strike'] else "N/A")
-        col6.metric("📍 Max Pain", f"{max_pain_strike:.0f}" if max_pain_strike else "N/A")
-
-        st.divider()
-        st.subheader("Livelli chiave vs Spot (colpo d'occhio)")
-        _levels = [
-            ("Gamma Flip", gex_metrics['gamma_switch_point']),
-            ("Vanna Flip", vex_metrics['vanna_switch_point']),
-            ("Put Wall", oi_metrics['put_wall_strike']),
-            ("Call Wall", oi_metrics['call_wall_strike']),
-            ("Max Pain", max_pain_strike),
-        ]
-        if expected_move['move'] is not None:
-            _levels.append(("Expected Move (banda sup.)", expected_move['upper_band']))
-            _levels.append(("Expected Move (banda inf.)", expected_move['lower_band']))
-
-        _rows = []
-        for label, level in _levels:
-            if level is None:
-                _rows.append({"Livello": label, "Prezzo": "N/A", "Distanza (punti)": "N/A", "Distanza (%)": "N/A", "Posizione": "N/A"})
-                continue
-            dist = spot_price - level
-            pct = dist / spot_price * 100
-            _rows.append({
-                "Livello": label,
-                "Prezzo": f"{level:,.0f}",
-                "Distanza (punti)": f"{-dist:+,.0f}",
-                "Distanza (%)": f"{-pct:+.2f}%",
-                "Posizione": "Sopra spot" if level > spot_price else ("Sotto spot" if level < spot_price else "= Spot")
-            })
-        st.dataframe(pd.DataFrame(_rows), width="stretch", hide_index=True)
-        st.caption(
-            "Distanza (%) positiva = il livello è sopra lo spot attuale; negativa = è sotto. "
-            "Utile per un confronto rapido tra tutti i livelli chiave senza dover leggere ogni grafico singolarmente."
-        )
-
-        st.divider()
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.markdown("#### Profilo GEX")
-            st.plotly_chart(create_gex_profile_chart(
-                gex_metrics['df_gex_profile'], spot_price, gex_metrics['gamma_switch_point'], selected_expiry_label
-            ), width="stretch", key="summary_gex")
-        with col2:
-            st.markdown("#### Distribuzione OI")
-            st.plotly_chart(create_oi_profile_chart(
-                oi_metrics['df_oi_profile'], spot_price, selected_expiry_label
-            ), width="stretch", key="summary_oi")
-        with col3:
-            st.markdown("#### Distribuzione Volumi")
-            st.plotly_chart(create_volume_profile_chart(
-                vol_metrics['df_vol_profile'], spot_price, selected_expiry_label
-            ), width="stretch", key="summary_vol")
-
-        st.divider()
-        with st.expander("📄 Dati opzione in forma tabellare (questa scadenza)", expanded=False):
-            _colonne_tabella = ['Strike', 'Type', 'Settle', 'Vol', 'OI', 'Delta', 'Gamma', 'IV', 'Moneyness']
-            _tabella_dati = df_selected_expiry[_colonne_tabella].copy().sort_values('Strike').reset_index(drop=True)
-            _tabella_dati.columns = ['Strike', 'Tipo', 'Settle', 'Volume', 'OI', 'Delta', 'Gamma', 'IV', 'Moneyness']
-            st.dataframe(
-                _tabella_dati.style.format({
-                    'Settle': '{:.2f}', 'Delta': '{:.3f}', 'Gamma': '{:.5f}',
-                    'IV': '{:.2%}', 'Moneyness': '{:.3f}'
-                }),
-                width="stretch", hide_index=True
+        if not _oi_disponibile:
+            st.info("⏳ Open Interest non ancora disponibile per questa scadenza (probabile intraday): questa sezione richiede l'OI per calcolare le metriche. Riprova più tardi o scegli una scadenza con OI disponibile.")
+        else:
+            col1, col2, col3, col4, col5, col6 = st.columns(6)
+            col1.metric("Spot Price", f"{spot_price:.2f}")
+            _net_gex_m = gex_metrics['total_net_gex'] / 1_000_000
+            col2.metric(
+                "Net GEX (Scadenza)", f"€{_net_gex_m:.2f} M",
+                delta=f"{_net_gex_m:+.2f} M ({'SHORT γ' if _net_gex_m < 0 else 'LONG γ'})",
+                delta_color="inverse"
             )
+            col3.metric("Net VEX (Scadenza)", f"€{vex_metrics['total_net_vex'] / 1_000:.2f} K")
+            col4.metric("🛡️ Put Wall", f"{oi_metrics['put_wall_strike']:.0f}" if oi_metrics['put_wall_strike'] else "N/A")
+            col5.metric("🛑 Call Wall", f"{oi_metrics['call_wall_strike']:.0f}" if oi_metrics['call_wall_strike'] else "N/A")
+            col6.metric("📍 Max Pain", f"{max_pain_strike:.0f}" if max_pain_strike else "N/A")
+
+            st.divider()
+            st.subheader("Livelli chiave vs Spot (colpo d'occhio)")
+            _levels = [
+                ("Gamma Flip", gex_metrics['gamma_switch_point']),
+                ("Vanna Flip", vex_metrics['vanna_switch_point']),
+                ("Put Wall", oi_metrics['put_wall_strike']),
+                ("Call Wall", oi_metrics['call_wall_strike']),
+                ("Max Pain", max_pain_strike),
+            ]
+            if expected_move['move'] is not None:
+                _levels.append(("Expected Move (banda sup.)", expected_move['upper_band']))
+                _levels.append(("Expected Move (banda inf.)", expected_move['lower_band']))
+
+            _rows = []
+            for label, level in _levels:
+                if level is None:
+                    _rows.append({"Livello": label, "Prezzo": "N/A", "Distanza (punti)": "N/A", "Distanza (%)": "N/A", "Posizione": "N/A"})
+                    continue
+                dist = spot_price - level
+                pct = dist / spot_price * 100
+                _rows.append({
+                    "Livello": label,
+                    "Prezzo": f"{level:,.0f}",
+                    "Distanza (punti)": f"{-dist:+,.0f}",
+                    "Distanza (%)": f"{-pct:+.2f}%",
+                    "Posizione": "Sopra spot" if level > spot_price else ("Sotto spot" if level < spot_price else "= Spot")
+                })
+            st.dataframe(pd.DataFrame(_rows), width="stretch", hide_index=True)
             st.caption(
-                "Tutti gli strike di questa scadenza (anche con OI/Volume a zero). Delta/Gamma/IV sono "
-                "stime via Black-Scholes, non dati di mercato osservati."
+                "Distanza (%) positiva = il livello è sopra lo spot attuale; negativa = è sotto. "
+                "Utile per un confronto rapido tra tutti i livelli chiave senza dover leggere ogni grafico singolarmente."
             )
+
+            st.divider()
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.markdown("#### Profilo GEX")
+                st.plotly_chart(create_gex_profile_chart(
+                    gex_metrics['df_gex_profile'], spot_price, gex_metrics['gamma_switch_point'], selected_expiry_label
+                ), width="stretch", key="summary_gex")
+            with col2:
+                st.markdown("#### Distribuzione OI")
+                st.plotly_chart(create_oi_profile_chart(
+                    oi_metrics['df_oi_profile'], spot_price, selected_expiry_label
+                ), width="stretch", key="summary_oi")
+            with col3:
+                st.markdown("#### Distribuzione Volumi")
+                st.plotly_chart(create_volume_profile_chart(
+                    vol_metrics['df_vol_profile'], spot_price, selected_expiry_label
+                ), width="stretch", key="summary_vol")
+
+            st.divider()
+            with st.expander("📄 Dati opzione in forma tabellare (questa scadenza)", expanded=False):
+                _colonne_tabella = ['Strike', 'Type', 'Settle', 'Vol', 'OI', 'Delta', 'Gamma', 'IV', 'Moneyness']
+                _tabella_dati = df_selected_expiry[_colonne_tabella].copy().sort_values('Strike').reset_index(drop=True)
+                _tabella_dati.columns = ['Strike', 'Tipo', 'Settle', 'Volume', 'OI', 'Delta', 'Gamma', 'IV', 'Moneyness']
+                st.dataframe(
+                    _tabella_dati.style.format({
+                        'Settle': '{:.2f}', 'Delta': '{:.3f}', 'Gamma': '{:.5f}',
+                        'IV': '{:.2%}', 'Moneyness': '{:.3f}'
+                    }),
+                    width="stretch", hide_index=True
+                )
+                st.caption(
+                    "Tutti gli strike di questa scadenza (anche con OI/Volume a zero). Delta/Gamma/IV sono "
+                    "stime via Black-Scholes, non dati di mercato osservati."
+                )
 
     # ========================= TAB GEX =========================
     with tab_gex:
@@ -454,12 +468,15 @@ if df_raw is not None and spot_price > 0:
             )
 
         col1, col2, col3 = st.columns(3)
-        col1.metric("Net GEX", f"€{gex_metrics['total_net_gex'] / 1_000_000:.2f} M")
-        col2.metric("Gamma Flip (γ=0)", f"{gex_metrics['gamma_switch_point']:.2f}" if gex_metrics['gamma_switch_point'] is not None else "N/A")
-        col3.metric("Spot − Gamma Flip", f"{gex_metrics['spot_switch_delta']:+.2f}" if gex_metrics['spot_switch_delta'] is not None else "N/A")
-        st.plotly_chart(create_gex_profile_chart(
-            gex_metrics['df_gex_profile'], spot_price, gex_metrics['gamma_switch_point'], selected_expiry_label
-        ), width="stretch", key="gex_tab")
+        if not _oi_disponibile:
+            st.info("⏳ Open Interest non ancora disponibile per questa scadenza (probabile intraday): questa sezione richiede l'OI per calcolare le metriche. Riprova più tardi o scegli una scadenza con OI disponibile.")
+        else:
+            col1.metric("Net GEX", f"€{gex_metrics['total_net_gex'] / 1_000_000:.2f} M")
+            col2.metric("Gamma Flip (γ=0)", f"{gex_metrics['gamma_switch_point']:.2f}" if gex_metrics['gamma_switch_point'] is not None else "N/A")
+            col3.metric("Spot − Gamma Flip", f"{gex_metrics['spot_switch_delta']:+.2f}" if gex_metrics['spot_switch_delta'] is not None else "N/A")
+            st.plotly_chart(create_gex_profile_chart(
+                gex_metrics['df_gex_profile'], spot_price, gex_metrics['gamma_switch_point'], selected_expiry_label
+            ), width="stretch", key="gex_tab")
 
     # ========================= TAB VEX/DEX =========================
     with tab_vex_dex:
@@ -485,23 +502,26 @@ if df_raw is not None and spot_price > 0:
                 """
             )
 
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Total Net DEX", f"€{dex_metrics['total_net_dex'] / 1_000_000:.2f} M")
-        col2.metric("Total Net VEX", f"€{vex_metrics['total_net_vex'] / 1_000:.2f} K")
-        col3.metric("Vanna Flip", f"{vex_metrics['vanna_switch_point']:.2f}" if vex_metrics['vanna_switch_point'] is not None else "N/A")
-        col4.metric("Spot − Vanna Flip", f"{spot_price - vex_metrics['vanna_switch_point']:+.2f}" if vex_metrics['vanna_switch_point'] is not None else "N/A")
-        st.divider()
-        col_dex, col_vex = st.columns(2)
-        with col_dex:
-            st.markdown("#### Profilo DEX")
-            st.plotly_chart(create_dex_profile_chart(
-                dex_metrics['df_dex_profile'], spot_price, selected_expiry_label
-            ), width="stretch", key="dex_tab")
-        with col_vex:
-            st.markdown("#### Profilo VEX")
-            st.plotly_chart(create_vex_profile_chart(
-                vex_metrics['df_vex_profile'], spot_price, vex_metrics['vanna_switch_point'], selected_expiry_label
-            ), width="stretch", key="vex_tab")
+        if not _oi_disponibile:
+            st.info("⏳ Open Interest non ancora disponibile per questa scadenza (probabile intraday): questa sezione richiede l'OI per calcolare le metriche. Riprova più tardi o scegli una scadenza con OI disponibile.")
+        else:
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("Total Net DEX", f"€{dex_metrics['total_net_dex'] / 1_000_000:.2f} M")
+            col2.metric("Total Net VEX", f"€{vex_metrics['total_net_vex'] / 1_000:.2f} K")
+            col3.metric("Vanna Flip", f"{vex_metrics['vanna_switch_point']:.2f}" if vex_metrics['vanna_switch_point'] is not None else "N/A")
+            col4.metric("Spot − Vanna Flip", f"{spot_price - vex_metrics['vanna_switch_point']:+.2f}" if vex_metrics['vanna_switch_point'] is not None else "N/A")
+            st.divider()
+            col_dex, col_vex = st.columns(2)
+            with col_dex:
+                st.markdown("#### Profilo DEX")
+                st.plotly_chart(create_dex_profile_chart(
+                    dex_metrics['df_dex_profile'], spot_price, selected_expiry_label
+                ), width="stretch", key="dex_tab")
+            with col_vex:
+                st.markdown("#### Profilo VEX")
+                st.plotly_chart(create_vex_profile_chart(
+                    vex_metrics['df_vex_profile'], spot_price, vex_metrics['vanna_switch_point'], selected_expiry_label
+                ), width="stretch", key="vex_tab")
 
     # ========================= TAB OI/VOL =========================
     with tab_oi_vol:
@@ -526,27 +546,30 @@ if df_raw is not None and spot_price > 0:
                 """
             )
 
-        col1, col2 = st.columns(2)
-        col1.metric("🛡️ Put Wall", f"{oi_metrics['put_wall_strike']:.0f}" if oi_metrics['put_wall_strike'] else "N/A", help=f"OI: {oi_metrics['put_wall_oi']:,.0f}")
-        col2.metric("🛑 Call Wall", f"{oi_metrics['call_wall_strike']:.0f}" if oi_metrics['call_wall_strike'] else "N/A", help=f"OI: {oi_metrics['call_wall_oi']:,.0f}")
-        st.plotly_chart(create_oi_profile_chart(oi_metrics['df_oi_profile'], spot_price, selected_expiry_label), width="stretch", key="oi_tab")
-        st.divider()
-        _total_call_vol = df_selected_expiry.loc[df_selected_expiry['Type'] == 'Call', 'Vol'].sum()
-        _total_put_vol = df_selected_expiry.loc[df_selected_expiry['Type'] == 'Put', 'Vol'].sum()
-        st.markdown("#### Volumi daily della scadenza (valori assoluti)")
-        colv1, colv2, colv3 = st.columns(3)
-        colv1.metric("Volume Call (daily)", f"{_total_call_vol:,.0f}")
-        colv2.metric("Volume Put (daily)", f"{_total_put_vol:,.0f}")
-        colv3.metric("Volume Totale (daily, Call+Put)", f"{_total_call_vol + _total_put_vol:,.0f}")
-        st.caption(
-            f"Volume scambiato il {analysis_date.date()} (data del file caricato), non un cumulato "
-            "da inizio vita del contratto. Somma di TUTTA la catena per questa scadenza (non solo "
-            "la fascia ±25% intorno allo spot mostrata nel grafico sotto)."
-        )
-        st.plotly_chart(create_volume_profile_chart(vol_metrics['df_vol_profile'], spot_price, selected_expiry_label), width="stretch", key="vol_tab")
-        st.divider()
-        st.plotly_chart(create_drift_arrow_chart(activity_metrics['drift_score'], spot_price, selected_expiry_label), width="stretch", key="drift_arrow")
-        st.plotly_chart(create_activity_ratio_chart(activity_metrics['df_activity_profile'], spot_price, selected_expiry_label), width="stretch", key="drift_detail")
+        if not _oi_disponibile:
+            st.info("⏳ Open Interest non ancora disponibile per questa scadenza (probabile intraday): questa sezione richiede l'OI per calcolare le metriche. Riprova più tardi o scegli una scadenza con OI disponibile.")
+        else:
+            col1, col2 = st.columns(2)
+            col1.metric("🛡️ Put Wall", f"{oi_metrics['put_wall_strike']:.0f}" if oi_metrics['put_wall_strike'] else "N/A", help=f"OI: {oi_metrics['put_wall_oi']:,.0f}")
+            col2.metric("🛑 Call Wall", f"{oi_metrics['call_wall_strike']:.0f}" if oi_metrics['call_wall_strike'] else "N/A", help=f"OI: {oi_metrics['call_wall_oi']:,.0f}")
+            st.plotly_chart(create_oi_profile_chart(oi_metrics['df_oi_profile'], spot_price, selected_expiry_label), width="stretch", key="oi_tab")
+            st.divider()
+            _total_call_vol = df_selected_expiry.loc[df_selected_expiry['Type'] == 'Call', 'Vol'].sum()
+            _total_put_vol = df_selected_expiry.loc[df_selected_expiry['Type'] == 'Put', 'Vol'].sum()
+            st.markdown("#### Volumi daily della scadenza (valori assoluti)")
+            colv1, colv2, colv3 = st.columns(3)
+            colv1.metric("Volume Call (daily)", f"{_total_call_vol:,.0f}")
+            colv2.metric("Volume Put (daily)", f"{_total_put_vol:,.0f}")
+            colv3.metric("Volume Totale (daily, Call+Put)", f"{_total_call_vol + _total_put_vol:,.0f}")
+            st.caption(
+                f"Volume scambiato il {analysis_date.date()} (data del file caricato), non un cumulato "
+                "da inizio vita del contratto. Somma di TUTTA la catena per questa scadenza (non solo "
+                "la fascia ±25% intorno allo spot mostrata nel grafico sotto)."
+            )
+            st.plotly_chart(create_volume_profile_chart(vol_metrics['df_vol_profile'], spot_price, selected_expiry_label), width="stretch", key="vol_tab")
+            st.divider()
+            st.plotly_chart(create_drift_arrow_chart(activity_metrics['drift_score'], spot_price, selected_expiry_label), width="stretch", key="drift_arrow")
+            st.plotly_chart(create_activity_ratio_chart(activity_metrics['df_activity_profile'], spot_price, selected_expiry_label), width="stretch", key="drift_detail")
 
     # ========================= TAB STATS =========================
     with tab_stats:
@@ -572,19 +595,22 @@ if df_raw is not None and spot_price > 0:
             )
 
         col1, col2, col3 = st.columns(3)
-        col1.metric("📍 Max Pain Strike", f"{max_pain_strike:.0f}" if max_pain_strike else "N/A")
-        col2.metric("P/C Ratio (OI)", f"{pc_ratios['pc_oi_ratio']:.3f}" if pd.notna(pc_ratios['pc_oi_ratio']) else "N/A")
-        col3.metric("P/C Ratio (Volume)", f"{pc_ratios['pc_vol_ratio']:.3f}" if pd.notna(pc_ratios['pc_vol_ratio']) else "N/A")
-        em = expected_move
-        if em['move'] is not None:
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Banda Superiore Attesa", f"{em['upper_band']:.2f}")
-            col2.metric("Banda Inferiore Attesa", f"{em['lower_band']:.2f}")
-            col3.metric("Movimento Atteso (+/-)", f"{em['move']:.2f}", help=f"IV ATM: {em['iv_atm']:.2%}")
+        if not _oi_disponibile:
+            st.info("⏳ Open Interest non ancora disponibile per questa scadenza (probabile intraday): questa sezione richiede l'OI per calcolare le metriche. Riprova più tardi o scegli una scadenza con OI disponibile.")
         else:
-            st.warning("Impossibile calcolare l'Expected Move (IV ATM mancante).")
-        st.divider()
-        st.plotly_chart(create_max_pain_chart(df_payouts, max_pain_strike, selected_expiry_label), width="stretch", key="max_pain")
+            col1.metric("📍 Max Pain Strike", f"{max_pain_strike:.0f}" if max_pain_strike else "N/A")
+            col2.metric("P/C Ratio (OI)", f"{pc_ratios['pc_oi_ratio']:.3f}" if pd.notna(pc_ratios['pc_oi_ratio']) else "N/A")
+            col3.metric("P/C Ratio (Volume)", f"{pc_ratios['pc_vol_ratio']:.3f}" if pd.notna(pc_ratios['pc_vol_ratio']) else "N/A")
+            em = expected_move
+            if em['move'] is not None:
+                col1, col2, col3 = st.columns(3)
+                col1.metric("Banda Superiore Attesa", f"{em['upper_band']:.2f}")
+                col2.metric("Banda Inferiore Attesa", f"{em['lower_band']:.2f}")
+                col3.metric("Movimento Atteso (+/-)", f"{em['move']:.2f}", help=f"IV ATM: {em['iv_atm']:.2%}")
+            else:
+                st.warning("Impossibile calcolare l'Expected Move (IV ATM mancante).")
+            st.divider()
+            st.plotly_chart(create_max_pain_chart(df_payouts, max_pain_strike, selected_expiry_label), width="stretch", key="max_pain")
 
     # ========================= TAB VOL SURFACE =========================
     with tab_vol_surf:
@@ -963,56 +989,59 @@ si consuma sempre più in fretta — non in modo lineare.
                 """
             )
 
-        _atm_idx = (df_selected_expiry_oi['Strike'] - spot_price).abs().idxmin()
-        _atm_strike = df_selected_expiry_oi.loc[_atm_idx, 'Strike']
-        _atm_rows = df_selected_expiry_oi[df_selected_expiry_oi['Strike'] == _atm_strike]
-        _iv_atm_decay = _atm_rows['IV'].mean()
-        _dte_max = int(df_selected_expiry_oi['DTE_Days'].iloc[0])
-
-        if pd.isna(_iv_atm_decay) or _iv_atm_decay <= 0:
-            st.warning("IV non disponibile per lo strike ATM di questa scadenza (Settle non invertibile): impossibile calcolare il decadimento.")
-        elif _dte_max <= 0:
-            st.info("Questa scadenza è già a 0 giorni residui (o scaduta): nessuna curva di decadimento da mostrare.")
+        if not _oi_disponibile:
+            st.info("⏳ Open Interest non ancora disponibile per questa scadenza (probabile intraday): questa sezione richiede l'OI per calcolare le metriche. Riprova più tardi o scegli una scadenza con OI disponibile.")
         else:
-            col_d1, col_d2, col_d3 = st.columns(3)
-            col_d1.metric("Strike ATM", f"{_atm_strike:,.0f}")
-            col_d2.metric("IV usata (fissa)", f"{_iv_atm_decay:.2%}")
-            col_d3.metric("Giorni residui oggi", f"{_dte_max}")
+            _atm_idx = (df_selected_expiry_oi['Strike'] - spot_price).abs().idxmin()
+            _atm_strike = df_selected_expiry_oi.loc[_atm_idx, 'Strike']
+            _atm_rows = df_selected_expiry_oi[df_selected_expiry_oi['Strike'] == _atm_strike]
+            _iv_atm_decay = _atm_rows['IV'].mean()
+            _dte_max = int(df_selected_expiry_oi['DTE_Days'].iloc[0])
 
-            _giorni = np.linspace(_dte_max, 0, 60)
-            _prezzi_call = [_bs_price(spot_price, _atm_strike, max(g / 365.25, 1e-6),
-                                       risk_free_rate, dividend_yield, _iv_atm_decay, 'Call') for g in _giorni]
-            _prezzi_put = [_bs_price(spot_price, _atm_strike, max(g / 365.25, 1e-6),
-                                      risk_free_rate, dividend_yield, _iv_atm_decay, 'Put') for g in _giorni]
+            if pd.isna(_iv_atm_decay) or _iv_atm_decay <= 0:
+                st.warning("IV non disponibile per lo strike ATM di questa scadenza (Settle non invertibile): impossibile calcolare il decadimento.")
+            elif _dte_max <= 0:
+                st.info("Questa scadenza è già a 0 giorni residui (o scaduta): nessuna curva di decadimento da mostrare.")
+            else:
+                col_d1, col_d2, col_d3 = st.columns(3)
+                col_d1.metric("Strike ATM", f"{_atm_strike:,.0f}")
+                col_d2.metric("IV usata (fissa)", f"{_iv_atm_decay:.2%}")
+                col_d3.metric("Giorni residui oggi", f"{_dte_max}")
 
-            _fig_decay = go.Figure()
-            _fig_decay.add_trace(go.Scatter(
-                x=_giorni, y=_prezzi_call, mode='lines', name='Call ATM', line=dict(color='#34d399', width=2.5),
-                hovertemplate='%{x:.1f} giorni residui<br>Call: %{y:,.2f}<extra></extra>'
-            ))
-            _fig_decay.add_trace(go.Scatter(
-                x=_giorni, y=_prezzi_put, mode='lines', name='Put ATM', line=dict(color='#f87171', width=2.5),
-                hovertemplate='%{x:.1f} giorni residui<br>Put: %{y:,.2f}<extra></extra>'
-            ))
-            _fig_decay.update_xaxes(title="Giorni alla scadenza", autorange='reversed')
-            _fig_decay.update_yaxes(title="Prezzo teorico (Black-Scholes)")
-            _fig_decay.update_layout(template='plotly_dark', height=450, margin=dict(l=10, r=10, t=30, b=10),
-                                      hovermode='x unified')
-            st.plotly_chart(_fig_decay, width="stretch", key="decay_chart")
-            st.caption(
-                f"Curva calcolata con spot {spot_price:,.2f} e IV {_iv_atm_decay:.2%} tenuti fissi ai valori "
-                f"odierni — solo il tempo residuo cambia, da {_dte_max} giorni a 0."
-            )
+                _giorni = np.linspace(_dte_max, 0, 60)
+                _prezzi_call = [_bs_price(spot_price, _atm_strike, max(g / 365.25, 1e-6),
+                                           risk_free_rate, dividend_yield, _iv_atm_decay, 'Call') for g in _giorni]
+                _prezzi_put = [_bs_price(spot_price, _atm_strike, max(g / 365.25, 1e-6),
+                                          risk_free_rate, dividend_yield, _iv_atm_decay, 'Put') for g in _giorni]
 
-            with st.expander("📋 Vedi in forma tabellare (giorni interi)", expanded=False):
-                _giorni_interi = list(range(_dte_max, -1, -1))
-                _tabella_decay = []
-                for g in _giorni_interi:
-                    T = max(g / 365.25, 1e-6)
-                    _c = _bs_price(spot_price, _atm_strike, T, risk_free_rate, dividend_yield, _iv_atm_decay, 'Call')
-                    _p = _bs_price(spot_price, _atm_strike, T, risk_free_rate, dividend_yield, _iv_atm_decay, 'Put')
-                    _tabella_decay.append({'Giorni residui': g, 'Call ATM': round(_c, 2), 'Put ATM': round(_p, 2)})
-                st.dataframe(pd.DataFrame(_tabella_decay), width="stretch", hide_index=True)
+                _fig_decay = go.Figure()
+                _fig_decay.add_trace(go.Scatter(
+                    x=_giorni, y=_prezzi_call, mode='lines', name='Call ATM', line=dict(color='#34d399', width=2.5),
+                    hovertemplate='%{x:.1f} giorni residui<br>Call: %{y:,.2f}<extra></extra>'
+                ))
+                _fig_decay.add_trace(go.Scatter(
+                    x=_giorni, y=_prezzi_put, mode='lines', name='Put ATM', line=dict(color='#f87171', width=2.5),
+                    hovertemplate='%{x:.1f} giorni residui<br>Put: %{y:,.2f}<extra></extra>'
+                ))
+                _fig_decay.update_xaxes(title="Giorni alla scadenza", autorange='reversed')
+                _fig_decay.update_yaxes(title="Prezzo teorico (Black-Scholes)")
+                _fig_decay.update_layout(template='plotly_dark', height=450, margin=dict(l=10, r=10, t=30, b=10),
+                                          hovermode='x unified')
+                st.plotly_chart(_fig_decay, width="stretch", key="decay_chart")
+                st.caption(
+                    f"Curva calcolata con spot {spot_price:,.2f} e IV {_iv_atm_decay:.2%} tenuti fissi ai valori "
+                    f"odierni — solo il tempo residuo cambia, da {_dte_max} giorni a 0."
+                )
+
+                with st.expander("📋 Vedi in forma tabellare (giorni interi)", expanded=False):
+                    _giorni_interi = list(range(_dte_max, -1, -1))
+                    _tabella_decay = []
+                    for g in _giorni_interi:
+                        T = max(g / 365.25, 1e-6)
+                        _c = _bs_price(spot_price, _atm_strike, T, risk_free_rate, dividend_yield, _iv_atm_decay, 'Call')
+                        _p = _bs_price(spot_price, _atm_strike, T, risk_free_rate, dividend_yield, _iv_atm_decay, 'Put')
+                        _tabella_decay.append({'Giorni residui': g, 'Call ATM': round(_c, 2), 'Put ATM': round(_p, 2)})
+                    st.dataframe(pd.DataFrame(_tabella_decay), width="stretch", hide_index=True)
 
     # ========================= TAB RIPARTIZIONE OI =========================
     with tab_ripart:
