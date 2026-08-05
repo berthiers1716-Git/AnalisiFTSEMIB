@@ -1128,7 +1128,8 @@ sullo spot storico.
                         _tabella_decay = []
                         for g in _giorni_interi:
                             T = max(g / 365.25, 1e-6)
-                            _riga = {'Giorni residui': g}
+                            _data_g = (selected_expiry_date - pd.Timedelta(days=g)).date()
+                            _riga = {'Giorni residui': g, 'Data': _data_g.strftime('%d/%m/%Y')}
                             if _iv_call is not None:
                                 _riga['Call'] = round(_bs_price(spot_price, _strike_scelto, T, risk_free_rate, dividend_yield, _iv_call, 'Call'), 2)
                             if _iv_put is not None:
