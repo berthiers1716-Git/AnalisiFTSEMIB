@@ -13,6 +13,8 @@ import pandas as pd
 from scipy.stats import norm as _norm
 from scipy.optimize import brentq
 
+from calculations_module import calculate_max_pain, calculate_pc_ratios, calculate_expected_move
+
 MIN_T = 1.0 / 365.25
 
 MONTH_MAP = {
@@ -678,3 +680,162 @@ def modifica_nota_diario(log_path, id_nota, nuovo_testo, nuovo_contesto=None):
         note.loc[mask, 'data_ora'] = dt.datetime.now().strftime('%Y-%m-%d %H:%M')
     note.to_csv(log_path, index=False)
     return note
+
+
+# =============================================================================
+# STORICO PERSISTENTE STATS (Max Pain, P/C Ratio, Expected Move) PER SCADENZA
+# =============================================================================
+_STATS_LOG_COLS = [
+    'data', 'scadenza', 'spot', 'max_pain_strike', 'pc_oi_ratio', 'pc_vol_ratio',
+    'expected_move', 'upper_band', 'lower_band', 'iv_atm', 'dte_giorni',
+    'risk_free_rate_usato', 'dividend_yield_usato', 'fonte'
+]
+
+
+def _calcola_riga_stats(df_expiry_oi, spot, analysis_date, expiration_date,
+                         risk_free_rate, dividend_yield, contract_multiplier=2.5):
+    """
+    Calcola una singola riga di storico Stats per una scadenza/data, riusando le
+    stesse funzioni di calculations_module usate live nel tab Stats. Richiede
+    df_expiry_oi gia' filtrato per la scadenza e per OI>0 (coerente con quanto
+    fatto nel resto dell'app per Max Pain/P-C Ratio).
+    """
+    df_enr, _ = enrich_with_greeks(df_expiry_oi, spot, pd.Timestamp(analysis_date),
+                                    risk_free_rate, dividend_yield, contract_multiplier)
+    max_pain_strike, _ = calculate_max_pain(df_enr)
+    pc = calculate_pc_ratios(df_enr)
+    em = calculate_expected_move(df_enr, spot)
+    dte_giorni = int((pd.Timestamp(expiration_date) - pd.Timestamp(analysis_date)).days)
+    return {
+        'spot': spot,
+        'max_pain_strike': max_pain_strike,
+        'pc_oi_ratio': pc['pc_oi_ratio'],
+        'pc_vol_ratio': pc['pc_vol_ratio'],
+        'expected_move': em['move'],
+        'upper_band': em['upper_band'],
+        'lower_band': em['lower_band'],
+        'iv_atm': em['iv_atm'],
+        'dte_giorni': dte_giorni,
+    }
+
+
+def _carica_log_stats(log_path):
+    if os.path.exists(log_path):
+        log_df = pd.read_csv(log_path)
+        for col in _STATS_LOG_COLS:
+            if col not in log_df.columns:
+                log_df[col] = np.nan
+        return log_df
+    return pd.DataFrame(columns=_STATS_LOG_COLS)
+
+
+def ricostruisci_storico_stats(log_path, dati_folder, storico_totali_path, expiration_date,
+                                risk_free_rate, dividend_yield, contract_multiplier=2.5,
+                                index_prices_path=None, force_full=False):
+    """
+    Scansiona dati_folder per TUTTE le date in cui la scadenza indicata e' presente
+    con OI>0, e calcola/salva Max Pain, P/C Ratio ed Expected Move per ciascuna,
+    usando spot storico (storico_totali.csv, con fallback su index_prices_path) e
+    risk_free_rate/dividend_yield ATTUALI (approssimazione: quelli in vigore oggi,
+    non quelli storici del giorno - stessa semplificazione gia' usata nel tab
+    Decadimento).
+
+    Se force_full=False (default): salta le date gia' presenti nel log per questa
+    scadenza (i dati settled di un giorno passato non cambiano piu', quindi non ha
+    senso ricalcolarli ogni volta). Se force_full=True: ricalcola tutto da zero per
+    questa scadenza, sovrascrivendo il log esistente per queste date.
+
+    Non tocca l'eventuale riga di "oggi": quella va aggiornata con
+    aggiorna_riga_oggi_stats(), che riusa i valori gia' calcolati live nel tab
+    Stats invece di ricalcolarli qui (piu' efficiente e coerente con quanto
+    l'utente vede a schermo).
+
+    Returns: (n_giorni_aggiunti, df_log_completo_per_questa_scadenza)
+    """
+    scadenza_str = pd.Timestamp(expiration_date).date().isoformat()
+    log_df = _carica_log_stats(log_path)
+
+    esistenti = set()
+    if not force_full and not log_df.empty:
+        _mask_scad = log_df['scadenza'].astype(str) == scadenza_str
+        esistenti = set(log_df.loc[_mask_scad, 'data'].astype(str))
+
+    files_by_date = _scan_dati_folder(dati_folder)
+    spot_by_date = _load_spot_history(storico_totali_path, index_prices_path)
+
+    nuove_righe = []
+    for d, filepath in sorted(files_by_date.items()):
+        data_str = d.isoformat()
+        if data_str in esistenti:
+            continue
+        spot_d = spot_by_date.get(d)
+        if spot_d is None or pd.isna(spot_d):
+            continue
+        try:
+            with open(filepath, encoding='utf-8-sig') as f:
+                df_day, _ = parse_euronext_text(f.read())
+        except Exception:
+            continue
+        df_expiry_oi = df_day[(df_day['Expiration Date'] == expiration_date) & (df_day['OI'] > 0)].copy()
+        if df_expiry_oi.empty:
+            continue
+        try:
+            riga = _calcola_riga_stats(df_expiry_oi, spot_d, d, expiration_date,
+                                        risk_free_rate, dividend_yield, contract_multiplier)
+        except Exception:
+            continue
+        riga.update({
+            'data': data_str, 'scadenza': scadenza_str,
+            'risk_free_rate_usato': risk_free_rate, 'dividend_yield_usato': dividend_yield,
+            'fonte': 'ricostruito da dati/',
+        })
+        nuove_righe.append(riga)
+
+    if nuove_righe:
+        if force_full and not log_df.empty:
+            log_df = log_df[log_df['scadenza'].astype(str) != scadenza_str]
+        log_df = pd.concat([log_df, pd.DataFrame(nuove_righe)], ignore_index=True)
+        log_df = log_df.sort_values(['scadenza', 'data']).reset_index(drop=True)
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        log_df.to_csv(log_path, index=False)
+
+    df_scadenza = log_df[log_df['scadenza'].astype(str) == scadenza_str].sort_values('data').reset_index(drop=True)
+    return len(nuove_righe), df_scadenza
+
+
+def aggiorna_riga_oggi_stats(log_path, expiration_date, analysis_date, spot, max_pain_strike,
+                              pc_ratios, expected_move, dte_giorni, risk_free_rate, dividend_yield):
+    """
+    Aggiorna (o crea) la riga di "oggi" nello storico Stats per questa scadenza,
+    riusando i valori GIA' calcolati live nel tab Stats (non li ricalcola) - cosi'
+    lo storico riflette esattamente cio' che l'utente vede a schermo oggi, coi
+    parametri di mercato (risk-free/dividend) effettivamente in vigore oggi.
+
+    Se la riga per (scadenza, oggi) esiste gia', viene sovrascritta (non
+    duplicata) - utile se ricarichi lo stesso giorno con dati piu' completi
+    (es. OI arrivato dopo un caricamento intraday).
+
+    Returns: df_log_completo_per_questa_scadenza
+    """
+    scadenza_str = pd.Timestamp(expiration_date).date().isoformat()
+    data_str = pd.Timestamp(analysis_date).date().isoformat()
+    log_df = _carica_log_stats(log_path)
+
+    log_df = log_df[~((log_df['scadenza'].astype(str) == scadenza_str) & (log_df['data'].astype(str) == data_str))]
+    nuova_riga = pd.DataFrame([{
+        'data': data_str, 'scadenza': scadenza_str, 'spot': spot,
+        'max_pain_strike': max_pain_strike,
+        'pc_oi_ratio': pc_ratios['pc_oi_ratio'], 'pc_vol_ratio': pc_ratios['pc_vol_ratio'],
+        'expected_move': expected_move['move'], 'upper_band': expected_move['upper_band'],
+        'lower_band': expected_move['lower_band'], 'iv_atm': expected_move['iv_atm'],
+        'dte_giorni': dte_giorni,
+        'risk_free_rate_usato': risk_free_rate, 'dividend_yield_usato': dividend_yield,
+        'fonte': 'oggi (live)',
+    }])
+    log_df = pd.concat([log_df, nuova_riga], ignore_index=True)
+    log_df = log_df.sort_values(['scadenza', 'data']).reset_index(drop=True)
+    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+    log_df.to_csv(log_path, index=False)
+
+    df_scadenza = log_df[log_df['scadenza'].astype(str) == scadenza_str].sort_values('data').reset_index(drop=True)
+    return df_scadenza

@@ -23,7 +23,7 @@ from euronext_module import (
     parse_euronext_text, enrich_with_greeks, log_significant_volume_events,
     reconcile_log, update_log_fields, log_totali_giornalieri, ricostruisci_storico_totali,
     aggiungi_nota_diario, elimina_nota_diario, modifica_nota_diario, _bs_price,
-    estimate_iv_multi_day_batch
+    estimate_iv_multi_day_batch, ricostruisci_storico_stats, aggiorna_riga_oggi_stats
 )
 from calculations_module import (
     calculate_gex_metrics, calculate_oi_walls, calculate_max_pain,
@@ -262,6 +262,7 @@ with st.sidebar:
 VOLUME_LOG_PATH = "dati_locali/eventi_volume.csv"
 DATI_FOLDER_DEFAULT = "dati"
 TOTALI_LOG_PATH = "dati_locali/storico_totali.csv"
+STATS_LOG_PATH = "dati_locali/storico_stats.csv"
 
 if df_raw is not None and spot_price > 0:
     log_totali_giornalieri(df_raw, analysis_date, TOTALI_LOG_PATH, spot=spot_price)
@@ -613,6 +614,146 @@ if df_raw is not None and spot_price > 0:
                 st.warning("Impossibile calcolare l'Expected Move (IV ATM mancante).")
             st.divider()
             st.plotly_chart(create_max_pain_chart(df_payouts, max_pain_strike, selected_expiry_label), width="stretch", key="max_pain")
+
+        st.divider()
+        st.subheader("📈 Storico Stats (Max Pain / P-C Ratio / Expected Move)")
+
+        with st.expander("ℹ️ Come leggere questa sezione", expanded=False):
+            st.markdown(
+                """
+**Cosa mostra.** Come sono cambiati nel tempo, giorno per giorno, **per questa
+scadenza specifica**: lo strike di Max Pain (vs lo spot), il P/C Ratio (OI e
+Volume), e le bande di Expected Move (vs lo spot).
+
+**Come si popola.** A differenza di "Andamento Storico" (che aggiorna Volume/OI
+totali automaticamente a ogni caricamento), qui serve premere un bottone perché il
+calcolo è più pesante (richiede ri-derivare la IV di ogni strike per ogni giorno
+storico). Una volta calcolato, un giorno passato **non viene ricalcolato** alle
+successive pressioni: i dati settled non cambiano più, quindi si risparmia lavoro.
+
+**I due bottoni.**
+- **Aggiorna (solo giorni mancanti)** — uso quotidiano: aggiunge solo i giorni di
+  `dati/` non ancora presenti nello storico, e aggiorna la riga di oggi con i
+  valori che vedi qui sopra (quindi con risk-free/dividend **di oggi**, quelli
+  realmente in vigore ora).
+- **Ricalcola tutto da zero** — usalo solo se sospetti un problema (es. hai
+  cambiato molto risk-free/dividend/moltiplicatore e vuoi rifare tutto lo storico
+  con i valori attuali): butta via e ricalcola ogni giorno per questa scadenza.
+
+**⚠️ Approssimazione.** I giorni recuperati da `dati/` (diversi da oggi) vengono
+ricalcolati con il risk-free e il dividend yield **attuali** (quelli in sidebar
+ora), non quelli realmente in vigore quel giorno passato — non li conosciamo a
+posteriori. Se invece premi "Aggiorna" ogni giorno mentre usi l'app, la riga di
+**oggi** viene sempre salvata con i valori realmente in vigore quel giorno, quindi
+con l'uso quotidiano lo storico che si costruisce diventa via via più realistico,
+e questa approssimazione riguarda solo i giorni recuperati in blocco a posteriori.
+                """
+            )
+
+        col_stats_btn1, col_stats_btn2 = st.columns(2)
+        with col_stats_btn1:
+            if st.button("🔄 Aggiorna storico Stats (solo giorni mancanti)", key="aggiorna_stats_incrementale"):
+                _n_aggiunti, _ = ricostruisci_storico_stats(
+                    STATS_LOG_PATH, DATI_FOLDER_DEFAULT, TOTALI_LOG_PATH, selected_expiry_date,
+                    risk_free_rate, dividend_yield, contract_multiplier,
+                    index_prices_path=percorso_prezzi, force_full=False
+                )
+                _msg = f"Aggiunti {_n_aggiunti} giorni storici mancanti."
+                if _oi_disponibile:
+                    aggiorna_riga_oggi_stats(
+                        STATS_LOG_PATH, selected_expiry_date, analysis_date, spot_price,
+                        max_pain_strike, pc_ratios, expected_move,
+                        int(df_selected_expiry_oi['DTE_Days'].iloc[0]), risk_free_rate, dividend_yield
+                    )
+                    _msg += " Riga di oggi aggiornata."
+                else:
+                    _msg += " Riga di oggi NON aggiornata (OI non disponibile oggi)."
+                st.success(_msg)
+        with col_stats_btn2:
+            if st.button("♻️ Ricalcola tutto da zero (questa scadenza)", key="ricalcola_stats_full"):
+                _n_aggiunti, _ = ricostruisci_storico_stats(
+                    STATS_LOG_PATH, DATI_FOLDER_DEFAULT, TOTALI_LOG_PATH, selected_expiry_date,
+                    risk_free_rate, dividend_yield, contract_multiplier,
+                    index_prices_path=percorso_prezzi, force_full=True
+                )
+                _msg = f"Ricalcolati da zero {_n_aggiunti} giorni storici per questa scadenza."
+                if _oi_disponibile:
+                    aggiorna_riga_oggi_stats(
+                        STATS_LOG_PATH, selected_expiry_date, analysis_date, spot_price,
+                        max_pain_strike, pc_ratios, expected_move,
+                        int(df_selected_expiry_oi['DTE_Days'].iloc[0]), risk_free_rate, dividend_yield
+                    )
+                    _msg += " Riga di oggi aggiornata."
+                else:
+                    _msg += " Riga di oggi NON aggiornata (OI non disponibile oggi)."
+                st.success(_msg)
+
+        _scadenza_str_stats = pd.Timestamp(selected_expiry_date).date().isoformat()
+        if os.path.exists(STATS_LOG_PATH):
+            _log_stats_tutto = pd.read_csv(STATS_LOG_PATH)
+            _storico_stats = _log_stats_tutto[_log_stats_tutto['scadenza'].astype(str) == _scadenza_str_stats].copy()
+            _storico_stats = _storico_stats.sort_values('data').reset_index(drop=True)
+        else:
+            _storico_stats = pd.DataFrame()
+
+        if _storico_stats.empty:
+            st.info("Nessuno storico ancora salvato per questa scadenza: premi 'Aggiorna storico Stats' qui sopra.")
+        elif len(_storico_stats) < 2:
+            st.info("Serve almeno un secondo giorno per mostrare un grafico storico.")
+        else:
+            _fig_stats = make_subplots(
+                rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.06,
+                row_heights=[0.34, 0.33, 0.33],
+                subplot_titles=("Spot vs Max Pain", "P/C Ratio (OI e Volume)", "Spot vs Bande Expected Move")
+            )
+            _fig_stats.add_trace(go.Scatter(
+                x=_storico_stats['data'], y=_storico_stats['spot'], mode='lines+markers', name='Spot',
+                line=dict(color='#60a5fa'), hovertemplate='%{x}<br>Spot: %{y:,.2f}<extra></extra>'
+            ), row=1, col=1)
+            _fig_stats.add_trace(go.Scatter(
+                x=_storico_stats['data'], y=_storico_stats['max_pain_strike'], mode='lines+markers', name='Max Pain',
+                line=dict(color='#fbbf24'), hovertemplate='%{x}<br>Max Pain: %{y:,.0f}<extra></extra>'
+            ), row=1, col=1)
+
+            _fig_stats.add_trace(go.Scatter(
+                x=_storico_stats['data'], y=_storico_stats['pc_oi_ratio'], mode='lines+markers', name='P/C Ratio (OI)',
+                line=dict(color='#34d399'), hovertemplate='%{x}<br>P/C OI: %{y:.3f}<extra></extra>'
+            ), row=2, col=1)
+            _fig_stats.add_trace(go.Scatter(
+                x=_storico_stats['data'], y=_storico_stats['pc_vol_ratio'], mode='lines+markers', name='P/C Ratio (Volume)',
+                line=dict(color='#f97316'), hovertemplate='%{x}<br>P/C Volume: %{y:.3f}<extra></extra>'
+            ), row=2, col=1)
+            _fig_stats.add_hline(y=1.0, line_dash='dot', line_color='#94a3b8', row=2, col=1)
+
+            _fig_stats.add_trace(go.Scatter(
+                x=_storico_stats['data'], y=_storico_stats['spot'], mode='lines+markers', name='Spot ',
+                line=dict(color='#60a5fa'), showlegend=False,
+                hovertemplate='%{x}<br>Spot: %{y:,.2f}<extra></extra>'
+            ), row=3, col=1)
+            _fig_stats.add_trace(go.Scatter(
+                x=_storico_stats['data'], y=_storico_stats['upper_band'], mode='lines', name='Banda Superiore',
+                line=dict(color='#f87171', dash='dash'), hovertemplate='%{x}<br>Banda Sup.: %{y:,.2f}<extra></extra>'
+            ), row=3, col=1)
+            _fig_stats.add_trace(go.Scatter(
+                x=_storico_stats['data'], y=_storico_stats['lower_band'], mode='lines', name='Banda Inferiore',
+                line=dict(color='#f87171', dash='dash'), hovertemplate='%{x}<br>Banda Inf.: %{y:,.2f}<extra></extra>'
+            ), row=3, col=1)
+
+            _fig_stats.update_layout(
+                height=750, template='plotly_dark', margin=dict(l=10, r=10, t=40, b=10),
+                legend=dict(orientation='h', yanchor='bottom', y=1.02), hovermode='x unified'
+            )
+            _fig_stats.update_xaxes(showspikes=True, spikemode='across', spikesnap='cursor',
+                                     spikethickness=1, spikedash='dot', spikecolor='#94a3b8')
+            st.plotly_chart(_fig_stats, width="stretch", key="storico_stats_chart")
+            st.caption(
+                f"Storico per la scadenza {selected_expiry_label}, {len(_storico_stats)} giorni salvati. "
+                "I giorni con fonte 'ricostruito da dati/' usano risk-free/dividend attuali come "
+                "approssimazione; i giorni con fonte 'oggi (live)' usano i valori realmente in vigore quel giorno."
+            )
+
+            with st.expander("📋 Vedi tabella storico Stats", expanded=False):
+                st.dataframe(_storico_stats, width="stretch", hide_index=True)
 
     # ========================= TAB VOL SURFACE =========================
     with tab_vol_surf:
