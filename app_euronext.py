@@ -663,7 +663,9 @@ e questa approssimazione riguarda solo i giorni recuperati in blocco a posterior
                     aggiorna_riga_oggi_stats(
                         STATS_LOG_PATH, selected_expiry_date, analysis_date, spot_price,
                         max_pain_strike, pc_ratios, expected_move,
-                        int(df_selected_expiry_oi['DTE_Days'].iloc[0]), risk_free_rate, dividend_yield
+                        int(df_selected_expiry_oi['DTE_Days'].iloc[0]), risk_free_rate, dividend_yield,
+                        call_volume_tot=df_selected_expiry_oi.loc[df_selected_expiry_oi['Type'] == 'Call', 'Vol'].sum(),
+                        put_volume_tot=df_selected_expiry_oi.loc[df_selected_expiry_oi['Type'] == 'Put', 'Vol'].sum()
                     )
                     _msg += " Riga di oggi aggiornata."
                 else:
@@ -681,7 +683,9 @@ e questa approssimazione riguarda solo i giorni recuperati in blocco a posterior
                     aggiorna_riga_oggi_stats(
                         STATS_LOG_PATH, selected_expiry_date, analysis_date, spot_price,
                         max_pain_strike, pc_ratios, expected_move,
-                        int(df_selected_expiry_oi['DTE_Days'].iloc[0]), risk_free_rate, dividend_yield
+                        int(df_selected_expiry_oi['DTE_Days'].iloc[0]), risk_free_rate, dividend_yield,
+                        call_volume_tot=df_selected_expiry_oi.loc[df_selected_expiry_oi['Type'] == 'Call', 'Vol'].sum(),
+                        put_volume_tot=df_selected_expiry_oi.loc[df_selected_expiry_oi['Type'] == 'Put', 'Vol'].sum()
                     )
                     _msg += " Riga di oggi aggiornata."
                 else:
@@ -759,7 +763,9 @@ e questa approssimazione riguarda solo i giorni recuperati in blocco a posterior
                 ), row=2, col=1)
                 _fig_stats.add_trace(go.Scatter(
                     x=_storico_stats_filtrato['data'], y=_storico_stats_filtrato['pc_vol_ratio'], mode='lines+markers', name='P/C Ratio (Volume)',
-                    line=dict(color='#f97316'), hovertemplate='%{x}<br>P/C Volume: %{y:.3f}<extra></extra>'
+                    line=dict(color='#f97316'),
+                    customdata=_storico_stats_filtrato[['call_volume_tot', 'put_volume_tot']].to_numpy(),
+                    hovertemplate='%{x}<br>P/C Volume: %{y:.3f}<br>Call: %{customdata[0]:,.0f} · Put: %{customdata[1]:,.0f}<extra></extra>'
                 ), row=2, col=1)
                 _fig_stats.add_hline(y=1.0, line_dash='dot', line_color='#94a3b8', row=2, col=1)
 

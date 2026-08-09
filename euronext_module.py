@@ -687,8 +687,8 @@ def modifica_nota_diario(log_path, id_nota, nuovo_testo, nuovo_contesto=None):
 # =============================================================================
 _STATS_LOG_COLS = [
     'data', 'scadenza', 'spot', 'max_pain_strike', 'pc_oi_ratio', 'pc_vol_ratio',
-    'expected_move', 'upper_band', 'lower_band', 'iv_atm', 'dte_giorni',
-    'risk_free_rate_usato', 'dividend_yield_usato', 'fonte'
+    'call_volume_tot', 'put_volume_tot', 'expected_move', 'upper_band', 'lower_band',
+    'iv_atm', 'dte_giorni', 'risk_free_rate_usato', 'dividend_yield_usato', 'fonte'
 ]
 
 
@@ -706,11 +706,15 @@ def _calcola_riga_stats(df_expiry_oi, spot, analysis_date, expiration_date,
     pc = calculate_pc_ratios(df_enr)
     em = calculate_expected_move(df_enr, spot)
     dte_giorni = int((pd.Timestamp(expiration_date) - pd.Timestamp(analysis_date)).days)
+    call_volume_tot = df_enr.loc[df_enr['Type'] == 'Call', 'Vol'].sum()
+    put_volume_tot = df_enr.loc[df_enr['Type'] == 'Put', 'Vol'].sum()
     return {
         'spot': spot,
         'max_pain_strike': max_pain_strike,
         'pc_oi_ratio': pc['pc_oi_ratio'],
         'pc_vol_ratio': pc['pc_vol_ratio'],
+        'call_volume_tot': call_volume_tot,
+        'put_volume_tot': put_volume_tot,
         'expected_move': em['move'],
         'upper_band': em['upper_band'],
         'lower_band': em['lower_band'],
@@ -804,7 +808,8 @@ def ricostruisci_storico_stats(log_path, dati_folder, storico_totali_path, expir
 
 
 def aggiorna_riga_oggi_stats(log_path, expiration_date, analysis_date, spot, max_pain_strike,
-                              pc_ratios, expected_move, dte_giorni, risk_free_rate, dividend_yield):
+                              pc_ratios, expected_move, dte_giorni, risk_free_rate, dividend_yield,
+                              call_volume_tot=None, put_volume_tot=None):
     """
     Aggiorna (o crea) la riga di "oggi" nello storico Stats per questa scadenza,
     riusando i valori GIA' calcolati live nel tab Stats (non li ricalcola) - cosi'
@@ -826,6 +831,7 @@ def aggiorna_riga_oggi_stats(log_path, expiration_date, analysis_date, spot, max
         'data': data_str, 'scadenza': scadenza_str, 'spot': spot,
         'max_pain_strike': max_pain_strike,
         'pc_oi_ratio': pc_ratios['pc_oi_ratio'], 'pc_vol_ratio': pc_ratios['pc_vol_ratio'],
+        'call_volume_tot': call_volume_tot, 'put_volume_tot': put_volume_tot,
         'expected_move': expected_move['move'], 'upper_band': expected_move['upper_band'],
         'lower_band': expected_move['lower_band'], 'iv_atm': expected_move['iv_atm'],
         'dte_giorni': dte_giorni,
