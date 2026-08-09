@@ -23,7 +23,8 @@ from euronext_module import (
     parse_euronext_text, enrich_with_greeks, log_significant_volume_events,
     reconcile_log, update_log_fields, log_totali_giornalieri, ricostruisci_storico_totali,
     aggiungi_nota_diario, elimina_nota_diario, modifica_nota_diario, _bs_price,
-    estimate_iv_multi_day_batch, ricostruisci_storico_stats, aggiorna_riga_oggi_stats
+    estimate_iv_multi_day_batch, ricostruisci_storico_stats, aggiorna_riga_oggi_stats,
+    third_friday
 )
 from calculations_module import (
     calculate_gex_metrics, calculate_oi_walls, calculate_max_pain,
@@ -335,10 +336,10 @@ if df_raw is not None and spot_price > 0:
             dex_metrics      = calculate_dex_metrics(df_selected_expiry_oi, spot_price)
             vex_metrics      = calculate_vex_metrics(df_selected_expiry_oi, spot_price, risk_free_rate, dividend_yield)
 
-    tab_summary, tab_gex, tab_vex_dex, tab_oi_vol, tab_stats, tab_vol_surf, tab_eventi, tab_storico, tab_note, tab_decay, tab_ripart = st.tabs([
+    tab_summary, tab_gex, tab_vex_dex, tab_oi_vol, tab_stats, tab_vol_surf, tab_eventi, tab_storico, tab_note, tab_decay, tab_ripart, tab_treno = st.tabs([
         '📋 Summary', '📊 Gamma (GEX)', '🧩 Vanna & Delta (VEX/DEX)',
         '🎯 Support/Res (OI & Vol)', '📉 Stats', '📈 Vol Surface', '📋 Eventi Volume',
-        '📈 Andamento Storico', '📝 Note', '⏳ Decadimento', '⚖️ Ripartizione OI'
+        '📈 Andamento Storico', '📝 Note', '⏳ Decadimento', '⚖️ Ripartizione OI', '🚂 Treno'
     ])
 
     # ========================= TAB SUMMARY =========================
@@ -1448,6 +1449,140 @@ decisioni operative di brevissimo termine.
                 _tabella_rip = _pivot_rip.reset_index()[['Strike', 'Put', 'Call', 'ripart_put', 'ripart_call']]
                 _tabella_rip.columns = ['Strike', 'OI Put', 'OI Call', 'Ripart. Put %', 'Ripart. Call %']
                 st.dataframe(_tabella_rip.round(1), width="stretch", hide_index=True)
+
+    # ========================= TAB TRENO =========================
+    with tab_treno:
+        st.header("Treno: Settlement Mensili, Trimestrali (Vero Trend) e Ciclo 69")
+
+        with st.expander("ℹ️ Come leggere questa sezione", expanded=False):
+            st.markdown(
+                """
+**In memoria di Treno** (trenotrading), che ha reso pubblico gratuitamente il suo
+metodo di analisi ciclica.
+
+**Cosa mostra (primo passo).** Un grafico a barre/candele del FTSEMIB, a scelta
+giornaliero o settimanale, con sovrapposti i **settlement mensili** e **trimestrali**
+(scadenze MIBO/fituso: terzo venerdì del mese). I settlement trimestrali — Mar/Giu/
+Set/Dic — sono quello che Treno chiamava il **"Vero Trend"**.
+
+**⚠️ Semplificazione attuale.** Come valore di settlement si usa il prezzo di
+**Apertura** dell'indice nel giorno del terzo venerdì (non il prezzo ufficiale di
+regolamento, non fornito in questo dataset). Se quel giorno non è di borsa aperta
+(festivo), si usa l'apertura del primo giorno di borsa successivo disponibile.
+
+**Prossimi passi.** L'individuazione automatica del ciclo settimanale ("pornociclo")
+secondo il metodo di Treno — oscillazione standard e oscillazione inversa (il "69")
+— sarà aggiunta in un passo successivo, non ancora in questa versione.
+                """
+            )
+
+        _percorso_prezzi_treno = st.text_input(
+            "Percorso storico prezzi (OHLC)", value=percorso_prezzi, key="percorso_prezzi_treno"
+        )
+        if not os.path.exists(_percorso_prezzi_treno):
+            st.warning(f"File non trovato: `{_percorso_prezzi_treno}`.")
+        else:
+            _df_prezzi_treno = pd.read_csv(_percorso_prezzi_treno, parse_dates=['time'])
+            _df_prezzi_treno = _df_prezzi_treno.dropna(subset=['open', 'high', 'low', 'close'])
+            _df_prezzi_treno = _df_prezzi_treno.sort_values('time').drop_duplicates(subset='time').reset_index(drop=True)
+
+            if len(_df_prezzi_treno) < 2:
+                st.warning("Servono almeno due giorni di dati OHLC per mostrare un grafico.")
+            else:
+                col_t1, col_t2, col_t3 = st.columns(3)
+                with col_t1:
+                    _tf_treno = st.radio("Timeframe", ["Daily", "Weekly"], horizontal=True, key="treno_timeframe")
+                with col_t2:
+                    _mostra_mensili = st.checkbox("Settlement mensili", value=True, key="treno_mostra_mensili")
+                with col_t3:
+                    _mostra_trimestrali = st.checkbox("Settlement trimestrali (Vero Trend)", value=True, key="treno_mostra_trimestrali")
+
+                if _tf_treno == "Weekly":
+                    _df_bars_treno = (
+                        _df_prezzi_treno.set_index('time')
+                        .resample('W-FRI')
+                        .agg({'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last'})
+                        .dropna()
+                        .reset_index()
+                    )
+                else:
+                    _df_bars_treno = _df_prezzi_treno.copy()
+
+                _data_min_treno = _df_prezzi_treno['time'].min().date()
+                _data_max_treno = _df_prezzi_treno['time'].max().date()
+                _open_by_date_treno = dict(zip(_df_prezzi_treno['time'].dt.date, _df_prezzi_treno['open']))
+
+                def _calcola_settlement_treno(mesi):
+                    righe = []
+                    for anno in range(_data_min_treno.year, _data_max_treno.year + 1):
+                        for mese in mesi:
+                            _tf_data = third_friday(anno, mese).date()
+                            if _tf_data < _data_min_treno or _tf_data > _data_max_treno:
+                                continue
+                            _valore, _data_usata = None, _tf_data
+                            for _delta in range(5):
+                                _d = _tf_data + dt.timedelta(days=_delta)
+                                if _d in _open_by_date_treno:
+                                    _valore, _data_usata = _open_by_date_treno[_d], _d
+                                    break
+                            if _valore is not None:
+                                righe.append({
+                                    'settlement_teorico': _tf_data, 'data_usata': _data_usata, 'valore': _valore
+                                })
+                    return pd.DataFrame(righe)
+
+                _settlement_mensili_treno = _calcola_settlement_treno(range(1, 13))
+                _settlement_trimestrali_treno = _calcola_settlement_treno([3, 6, 9, 12])
+
+                _fig_treno = go.Figure()
+                _fig_treno.add_trace(go.Candlestick(
+                    x=_df_bars_treno['time'], open=_df_bars_treno['open'], high=_df_bars_treno['high'],
+                    low=_df_bars_treno['low'], close=_df_bars_treno['close'], name='FTSEMIB',
+                    increasing_line_color='#34d399', decreasing_line_color='#f87171'
+                ))
+                if _mostra_mensili and not _settlement_mensili_treno.empty:
+                    _fig_treno.add_trace(go.Scatter(
+                        x=_settlement_mensili_treno['data_usata'], y=_settlement_mensili_treno['valore'],
+                        mode='markers', name='Settlement Mensile',
+                        marker=dict(color='#fbbf24', size=8, symbol='circle'),
+                        hovertemplate='%{x}<br>Settlement mensile (Open): %{y:,.2f}<extra></extra>'
+                    ))
+                if _mostra_trimestrali and not _settlement_trimestrali_treno.empty:
+                    _fig_treno.add_trace(go.Scatter(
+                        x=_settlement_trimestrali_treno['data_usata'], y=_settlement_trimestrali_treno['valore'],
+                        mode='lines+markers', name='Vero Trend (Trimestrale)',
+                        line=dict(color='#60a5fa', width=2, dash='dot'),
+                        marker=dict(color='#60a5fa', size=11, symbol='diamond'),
+                        hovertemplate='%{x}<br>Settlement trimestrale (Open): %{y:,.2f}<extra></extra>'
+                    ))
+                _fig_treno.update_layout(
+                    template='plotly_dark', height=650, margin=dict(l=10, r=10, t=30, b=10),
+                    xaxis_rangeslider_visible=False, hovermode='x unified',
+                    legend=dict(orientation='h', yanchor='bottom', y=1.02)
+                )
+                st.plotly_chart(_fig_treno, width="stretch", key="treno_chart")
+
+                with st.expander("📋 Tabella settlement", expanded=False):
+                    col_tab1, col_tab2 = st.columns(2)
+                    with col_tab1:
+                        st.markdown("**Mensili**")
+                        if _settlement_mensili_treno.empty:
+                            st.caption("Nessuno nel periodo disponibile.")
+                        else:
+                            st.dataframe(
+                                _settlement_mensili_treno.sort_values('settlement_teorico', ascending=False),
+                                width="stretch", hide_index=True
+                            )
+                    with col_tab2:
+                        st.markdown("**Trimestrali (Vero Trend)**")
+                        if _settlement_trimestrali_treno.empty:
+                            st.caption("Nessuno nel periodo disponibile.")
+                        else:
+                            st.dataframe(
+                                _settlement_trimestrali_treno.sort_values('settlement_teorico', ascending=False),
+                                width="stretch", hide_index=True
+                            )
+
 
 
 
