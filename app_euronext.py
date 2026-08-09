@@ -701,59 +701,99 @@ e questa approssimazione riguarda solo i giorni recuperati in blocco a posterior
         elif len(_storico_stats) < 2:
             st.info("Serve almeno un secondo giorno per mostrare un grafico storico.")
         else:
-            _fig_stats = make_subplots(
-                rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.06,
-                row_heights=[0.34, 0.33, 0.33],
-                subplot_titles=("Spot vs Max Pain", "P/C Ratio (OI e Volume)", "Spot vs Bande Expected Move")
-            )
-            _fig_stats.add_trace(go.Scatter(
-                x=_storico_stats['data'], y=_storico_stats['spot'], mode='lines+markers', name='Spot',
-                line=dict(color='#60a5fa'), hovertemplate='%{x}<br>Spot: %{y:,.2f}<extra></extra>'
-            ), row=1, col=1)
-            _fig_stats.add_trace(go.Scatter(
-                x=_storico_stats['data'], y=_storico_stats['max_pain_strike'], mode='lines+markers', name='Max Pain',
-                line=dict(color='#fbbf24'), hovertemplate='%{x}<br>Max Pain: %{y:,.0f}<extra></extra>'
-            ), row=1, col=1)
+            _storico_stats['_data_dt'] = pd.to_datetime(_storico_stats['data'])
 
-            _fig_stats.add_trace(go.Scatter(
-                x=_storico_stats['data'], y=_storico_stats['pc_oi_ratio'], mode='lines+markers', name='P/C Ratio (OI)',
-                line=dict(color='#34d399'), hovertemplate='%{x}<br>P/C OI: %{y:.3f}<extra></extra>'
-            ), row=2, col=1)
-            _fig_stats.add_trace(go.Scatter(
-                x=_storico_stats['data'], y=_storico_stats['pc_vol_ratio'], mode='lines+markers', name='P/C Ratio (Volume)',
-                line=dict(color='#f97316'), hovertemplate='%{x}<br>P/C Volume: %{y:.3f}<extra></extra>'
-            ), row=2, col=1)
-            _fig_stats.add_hline(y=1.0, line_dash='dot', line_color='#94a3b8', row=2, col=1)
-
-            _fig_stats.add_trace(go.Scatter(
-                x=_storico_stats['data'], y=_storico_stats['spot'], mode='lines+markers', name='Spot ',
-                line=dict(color='#60a5fa'), showlegend=False,
-                hovertemplate='%{x}<br>Spot: %{y:,.2f}<extra></extra>'
-            ), row=3, col=1)
-            _fig_stats.add_trace(go.Scatter(
-                x=_storico_stats['data'], y=_storico_stats['upper_band'], mode='lines', name='Banda Superiore',
-                line=dict(color='#f87171', dash='dash'), hovertemplate='%{x}<br>Banda Sup.: %{y:,.2f}<extra></extra>'
-            ), row=3, col=1)
-            _fig_stats.add_trace(go.Scatter(
-                x=_storico_stats['data'], y=_storico_stats['lower_band'], mode='lines', name='Banda Inferiore',
-                line=dict(color='#f87171', dash='dash'), hovertemplate='%{x}<br>Banda Inf.: %{y:,.2f}<extra></extra>'
-            ), row=3, col=1)
-
-            _fig_stats.update_layout(
-                height=750, template='plotly_dark', margin=dict(l=10, r=10, t=40, b=10),
-                legend=dict(orientation='h', yanchor='bottom', y=1.02), hovermode='x unified'
-            )
-            _fig_stats.update_xaxes(showspikes=True, spikemode='across', spikesnap='cursor',
-                                     spikethickness=1, spikedash='dot', spikecolor='#94a3b8')
-            st.plotly_chart(_fig_stats, width="stretch", key="storico_stats_chart")
             st.caption(
-                f"Storico per la scadenza {selected_expiry_label}, {len(_storico_stats)} giorni salvati. "
-                "I giorni con fonte 'ricostruito da dati/' usano risk-free/dividend attuali come "
-                "approssimazione; i giorni con fonte 'oggi (live)' usano i valori realmente in vigore quel giorno."
+                "💡 Lo zoom (+) del grafico non riadatta automaticamente l'asse verticale: per restringere "
+                "il periodo mostrato conviene usare il filtro qui sotto invece dello zoom."
             )
+            col_fs1, col_fs2 = st.columns([1, 1.4])
+            with col_fs1:
+                _modalita_filtro_stats = st.radio(
+                    "Periodo da visualizzare", options=["Tutto", "Ultimi N giorni", "Da una data"],
+                    horizontal=True, key="storico_stats_filtro_modalita"
+                )
+            _storico_stats_filtrato = _storico_stats
+            if _modalita_filtro_stats == "Ultimi N giorni":
+                with col_fs2:
+                    _n_giorni_filtro_stats = st.number_input(
+                        "Quanti giorni di calendario (dall'ultimo disponibile)",
+                        min_value=1, value=60, step=1, key="storico_stats_n_giorni"
+                    )
+                _cutoff_stats = _storico_stats['_data_dt'].max() - pd.Timedelta(days=int(_n_giorni_filtro_stats))
+                _storico_stats_filtrato = _storico_stats[_storico_stats['_data_dt'] >= _cutoff_stats]
+            elif _modalita_filtro_stats == "Da una data":
+                with col_fs2:
+                    _data_da_stats = st.date_input(
+                        "Mostra a partire da",
+                        value=_storico_stats['_data_dt'].min().date(),
+                        min_value=_storico_stats['_data_dt'].min().date(),
+                        max_value=_storico_stats['_data_dt'].max().date(),
+                        key="storico_stats_data_da"
+                    )
+                _storico_stats_filtrato = _storico_stats[_storico_stats['_data_dt'].dt.date >= _data_da_stats]
+
+            _storico_stats_filtrato = _storico_stats_filtrato.drop(columns=['_data_dt']).reset_index(drop=True)
+            _storico_stats = _storico_stats.drop(columns=['_data_dt'])
+
+            if len(_storico_stats_filtrato) < 2:
+                st.info("Meno di due giorni nel periodo selezionato: allarga il filtro per vedere un grafico.")
+            else:
+                _fig_stats = make_subplots(
+                    rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.06,
+                    row_heights=[0.34, 0.33, 0.33],
+                    subplot_titles=("Spot vs Max Pain", "P/C Ratio (OI e Volume)", "Spot vs Bande Expected Move")
+                )
+                _fig_stats.add_trace(go.Scatter(
+                    x=_storico_stats_filtrato['data'], y=_storico_stats_filtrato['spot'], mode='lines+markers', name='Spot',
+                    line=dict(color='#60a5fa'), hovertemplate='%{x}<br>Spot: %{y:,.2f}<extra></extra>'
+                ), row=1, col=1)
+                _fig_stats.add_trace(go.Scatter(
+                    x=_storico_stats_filtrato['data'], y=_storico_stats_filtrato['max_pain_strike'], mode='lines+markers', name='Max Pain',
+                    line=dict(color='#fbbf24'), hovertemplate='%{x}<br>Max Pain: %{y:,.0f}<extra></extra>'
+                ), row=1, col=1)
+
+                _fig_stats.add_trace(go.Scatter(
+                    x=_storico_stats_filtrato['data'], y=_storico_stats_filtrato['pc_oi_ratio'], mode='lines+markers', name='P/C Ratio (OI)',
+                    line=dict(color='#34d399'), hovertemplate='%{x}<br>P/C OI: %{y:.3f}<extra></extra>'
+                ), row=2, col=1)
+                _fig_stats.add_trace(go.Scatter(
+                    x=_storico_stats_filtrato['data'], y=_storico_stats_filtrato['pc_vol_ratio'], mode='lines+markers', name='P/C Ratio (Volume)',
+                    line=dict(color='#f97316'), hovertemplate='%{x}<br>P/C Volume: %{y:.3f}<extra></extra>'
+                ), row=2, col=1)
+                _fig_stats.add_hline(y=1.0, line_dash='dot', line_color='#94a3b8', row=2, col=1)
+
+                _fig_stats.add_trace(go.Scatter(
+                    x=_storico_stats_filtrato['data'], y=_storico_stats_filtrato['spot'], mode='lines+markers', name='Spot ',
+                    line=dict(color='#60a5fa'), showlegend=False,
+                    hovertemplate='%{x}<br>Spot: %{y:,.2f}<extra></extra>'
+                ), row=3, col=1)
+                _fig_stats.add_trace(go.Scatter(
+                    x=_storico_stats_filtrato['data'], y=_storico_stats_filtrato['upper_band'], mode='lines', name='Banda Superiore',
+                    line=dict(color='#f87171', dash='dash'), hovertemplate='%{x}<br>Banda Sup.: %{y:,.2f}<extra></extra>'
+                ), row=3, col=1)
+                _fig_stats.add_trace(go.Scatter(
+                    x=_storico_stats_filtrato['data'], y=_storico_stats_filtrato['lower_band'], mode='lines', name='Banda Inferiore',
+                    line=dict(color='#f87171', dash='dash'), hovertemplate='%{x}<br>Banda Inf.: %{y:,.2f}<extra></extra>'
+                ), row=3, col=1)
+
+                _fig_stats.update_layout(
+                    height=750, template='plotly_dark', margin=dict(l=10, r=10, t=40, b=10),
+                    legend=dict(orientation='h', yanchor='bottom', y=1.02), hovermode='x unified'
+                )
+                _fig_stats.update_xaxes(showspikes=True, spikemode='across', spikesnap='cursor',
+                                         spikethickness=1, spikedash='dot', spikecolor='#94a3b8')
+                st.plotly_chart(_fig_stats, width="stretch", key="storico_stats_chart")
+                st.caption(
+                    f"Scadenza {selected_expiry_label}: {len(_storico_stats_filtrato)} giorni mostrati su "
+                    f"{len(_storico_stats)} salvati in totale. I giorni con fonte 'ricostruito da dati/' usano "
+                    "risk-free/dividend attuali come approssimazione; i giorni con fonte 'oggi (live)' usano i "
+                    "valori realmente in vigore quel giorno."
+                )
 
             with st.expander("📋 Vedi tabella storico Stats", expanded=False):
-                st.dataframe(_storico_stats, width="stretch", hide_index=True)
+                st.dataframe(_storico_stats_filtrato, width="stretch", hide_index=True)
+
 
     # ========================= TAB VOL SURFACE =========================
     with tab_vol_surf:
