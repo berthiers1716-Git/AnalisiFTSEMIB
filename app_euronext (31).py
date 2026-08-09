@@ -1530,6 +1530,9 @@ secondo il metodo di Treno — oscillazione standard e oscillazione inversa (il 
                 if len(_df_prezzi_treno_filtrato) < 2:
                     st.info("Meno di due giorni nel periodo selezionato: allarga il filtro per vedere un grafico.")
                 else:
+                    _data_min_treno = _df_prezzi_treno_filtrato['time'].min().date()
+                    _data_max_treno = _df_prezzi_treno_filtrato['time'].max().date()
+
                     col_t1, col_t2 = st.columns(2)
                     with col_t1:
                         _tf_treno = st.radio(
@@ -1546,6 +1549,105 @@ secondo il metodo di Treno — oscillazione standard e oscillazione inversa (il 
                         _mostra_trimestrali = st.checkbox("Settlement trimestrali (Vero Trend)", value=True, key="treno_mostra_trimestrali")
                     with col_c3:
                         _linea_mensili = st.checkbox("Congiungi i settlement mensili", value=False, key="treno_linea_mensili")
+
+                    _pivot_alti_treno = pd.DataFrame(columns=['idx', 'time', 'valore'])
+                    _pivot_bassi_treno = pd.DataFrame(columns=['idx', 'time', 'valore'])
+                    if _tf_treno == "Daily":
+                        st.markdown("**Rilevazione cicli (metodo Treno, generalizzato) — sperimentale**")
+                        st.caption(
+                            "Un massimo (o minimo) si considera partenza di un ciclo quando resta 'imbattuto' per "
+                            "almeno ¼ della durata del ciclo in esame — es. ~32 barre daily per un ciclo mensile → "
+                            "8 barre di conferma; lo stesso rapporto vale a qualunque scala (un ciclo di 8 anni "
+                            "richiede ~2 anni senza nuovo estremo). Qui conta solo il tempo (le inside bar non "
+                            "vengono escluse). La ricerca **alterna** massimo e minimo (come nel metodo originale): "
+                            "confermato un massimo, si cerca il minimo successivo, e viceversa — questo evita falsi "
+                            "segnali ripetuti durante un trend continuo in una sola direzione. Calcolato sempre "
+                            "sull'intera serie storica, non solo sul periodo filtrato, per evitare artefatti ai "
+                            "bordi del filtro."
+                        )
+                        col_cy1, col_cy2, col_cy3 = st.columns(3)
+                        with col_cy1:
+                            _ciclo_barre_treno = st.number_input(
+                                "Lunghezza ciclo (barre daily)", min_value=4, value=32, step=1, key="treno_ciclo_barre"
+                            )
+                        with col_cy2:
+                            _mostra_ciclo_inverso = st.checkbox(
+                                "Partenze cicli inversi (da massimi)", value=True, key="treno_ciclo_inverso"
+                            )
+                        with col_cy3:
+                            _mostra_ciclo_standard = st.checkbox(
+                                "Partenze cicli standard (da minimi)", value=False, key="treno_ciclo_standard"
+                            )
+                        _finestra_conferma_treno = max(1, round(_ciclo_barre_treno / 4))
+                        st.caption(f"Finestra di conferma usata: **{_finestra_conferma_treno} barre** senza nuovo estremo.")
+
+                        def _rileva_pivot_alternati_treno(df_prezzi, finestra, modo_iniziale='alto'):
+                            """
+                            Alterna la ricerca tra massimo e minimo (come il metodo Treno): confermato un
+                            massimo (nessun nuovo massimo per 'finestra' barre), si passa a cercare il minimo
+                            successivo, e viceversa. Evita di confermare più "massimi" consecutivi durante un
+                            trend continuo in discesa (o più "minimi" durante un trend continuo in salita), che
+                            sarebbero solo artefatti del conteggio e non veri punti di svolta.
+                            Nota: al cambio di fase il conteggio riparte da zero (non retroattivo sulle barre
+                            già passate), quindi la conferma può ritardare leggermente subito dopo un cambio -
+                            approssimazione accettabile per questa funzione sperimentale.
+                            """
+                            n = len(df_prezzi)
+                            if n < 2:
+                                return pd.DataFrame(columns=['idx', 'time', 'valore']), pd.DataFrame(columns=['idx', 'time', 'valore'])
+                            highs = df_prezzi['high'].to_numpy()
+                            lows = df_prezzi['low'].to_numpy()
+                            times = df_prezzi['time'].to_numpy()
+                            massimi, minimi = [], []
+                            modo = modo_iniziale
+                            candidato_idx = 0
+                            candidato_val = highs[0] if modo == 'alto' else lows[0]
+                            contatore = 0
+                            for i in range(1, n):
+                                if modo == 'alto':
+                                    val = highs[i]
+                                    if val > candidato_val:
+                                        candidato_val, candidato_idx, contatore = val, i, 0
+                                    else:
+                                        contatore += 1
+                                        if contatore >= finestra:
+                                            massimi.append({'idx': candidato_idx, 'time': times[candidato_idx], 'valore': candidato_val})
+                                            modo = 'basso'
+                                            _tratto = lows[candidato_idx:i + 1]
+                                            _rel = int(np.argmin(_tratto))
+                                            candidato_idx = candidato_idx + _rel
+                                            candidato_val = lows[candidato_idx]
+                                            contatore = 0
+                                else:
+                                    val = lows[i]
+                                    if val < candidato_val:
+                                        candidato_val, candidato_idx, contatore = val, i, 0
+                                    else:
+                                        contatore += 1
+                                        if contatore >= finestra:
+                                            minimi.append({'idx': candidato_idx, 'time': times[candidato_idx], 'valore': candidato_val})
+                                            modo = 'alto'
+                                            _tratto = highs[candidato_idx:i + 1]
+                                            _rel = int(np.argmax(_tratto))
+                                            candidato_idx = candidato_idx + _rel
+                                            candidato_val = highs[candidato_idx]
+                                            contatore = 0
+                            return pd.DataFrame(massimi), pd.DataFrame(minimi)
+
+                        _df_daily_completo_treno = _df_prezzi_treno.sort_values('time').reset_index(drop=True)
+                        _pivot_alti_full, _pivot_bassi_full = _rileva_pivot_alternati_treno(
+                            _df_daily_completo_treno, _finestra_conferma_treno
+                        )
+                        if _mostra_ciclo_inverso and not _pivot_alti_full.empty:
+                            _pivot_alti_treno = _pivot_alti_full[
+                                (pd.to_datetime(_pivot_alti_full['time']).dt.date >= _data_min_treno) &
+                                (pd.to_datetime(_pivot_alti_full['time']).dt.date <= _data_max_treno)
+                            ]
+                        if _mostra_ciclo_standard and not _pivot_bassi_full.empty:
+                            _pivot_bassi_treno = _pivot_bassi_full[
+                                (pd.to_datetime(_pivot_bassi_full['time']).dt.date >= _data_min_treno) &
+                                (pd.to_datetime(_pivot_bassi_full['time']).dt.date <= _data_max_treno)
+                            ]
 
                     if _tf_treno == "Weekly":
                         _df_bars_treno = (
@@ -1566,8 +1668,6 @@ secondo il metodo di Treno — oscillazione standard e oscillazione inversa (il 
                     else:
                         _df_bars_treno = _df_prezzi_treno_filtrato.copy()
 
-                    _data_min_treno = _df_prezzi_treno_filtrato['time'].min().date()
-                    _data_max_treno = _df_prezzi_treno_filtrato['time'].max().date()
                     _open_by_date_treno = dict(zip(_df_prezzi_treno_filtrato['time'].dt.date, _df_prezzi_treno_filtrato['open']))
 
                     def _calcola_settlement_treno(mesi):
@@ -1666,6 +1766,20 @@ secondo il metodo di Treno — oscillazione standard e oscillazione inversa (il 
                             line=dict(color='#60a5fa', width=2, dash='dot'),
                             marker=dict(color='#60a5fa', size=11, symbol='diamond'),
                             hovertemplate='%{x}<br>Settlement trimestrale (Open): %{y:,.2f}<extra></extra>'
+                        ))
+                    if not _pivot_alti_treno.empty:
+                        _fig_treno.add_trace(go.Scatter(
+                            x=_pivot_alti_treno['time'], y=_pivot_alti_treno['valore'],
+                            mode='markers', name='Partenza ciclo inverso (massimo)',
+                            marker=dict(color='#c084fc', size=13, symbol='triangle-down'),
+                            hovertemplate='%{x}<br>Massimo confermato: %{y:,.2f}<extra></extra>'
+                        ))
+                    if not _pivot_bassi_treno.empty:
+                        _fig_treno.add_trace(go.Scatter(
+                            x=_pivot_bassi_treno['time'], y=_pivot_bassi_treno['valore'],
+                            mode='markers', name='Partenza ciclo standard (minimo)',
+                            marker=dict(color='#38bdf8', size=13, symbol='triangle-up'),
+                            hovertemplate='%{x}<br>Minimo confermato: %{y:,.2f}<extra></extra>'
                         ))
                     _fig_treno.update_layout(
                         template='plotly_dark', height=650, margin=dict(l=10, r=10, t=30, b=10),
