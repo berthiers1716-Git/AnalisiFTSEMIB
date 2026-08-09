@@ -1460,8 +1460,8 @@ decisioni operative di brevissimo termine.
 **In memoria di Treno** (trenotrading), che ha reso pubblico gratuitamente il suo
 metodo di analisi ciclica.
 
-**Cosa mostra (primo passo).** Un grafico a barre/candele del FTSEMIB, a scelta
-giornaliero o settimanale, con sovrapposti i **settlement mensili** e **trimestrali**
+**Cosa mostra (primo passo).** Un grafico a barre/candele del FTSEMIB — giornaliero,
+settimanale o mensile — con sovrapposti i **settlement mensili** e **trimestrali**
 (scadenze MIBO/fituso: terzo venerdì del mese). I settlement trimestrali — Mar/Giu/
 Set/Dic — sono quello che Treno chiamava il **"Vero Trend"**.
 
@@ -1489,99 +1489,162 @@ secondo il metodo di Treno — oscillazione standard e oscillazione inversa (il 
             if len(_df_prezzi_treno) < 2:
                 st.warning("Servono almeno due giorni di dati OHLC per mostrare un grafico.")
             else:
-                col_t1, col_t2, col_t3 = st.columns(3)
-                with col_t1:
-                    _tf_treno = st.radio("Timeframe", ["Daily", "Weekly"], horizontal=True, key="treno_timeframe")
-                with col_t2:
-                    _mostra_mensili = st.checkbox("Settlement mensili", value=True, key="treno_mostra_mensili")
-                with col_t3:
-                    _mostra_trimestrali = st.checkbox("Settlement trimestrali (Vero Trend)", value=True, key="treno_mostra_trimestrali")
-
-                if _tf_treno == "Weekly":
-                    _df_bars_treno = (
-                        _df_prezzi_treno.set_index('time')
-                        .resample('W-FRI')
-                        .agg({'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last'})
-                        .dropna()
-                        .reset_index()
-                    )
-                else:
-                    _df_bars_treno = _df_prezzi_treno.copy()
-
-                _data_min_treno = _df_prezzi_treno['time'].min().date()
-                _data_max_treno = _df_prezzi_treno['time'].max().date()
-                _open_by_date_treno = dict(zip(_df_prezzi_treno['time'].dt.date, _df_prezzi_treno['open']))
-
-                def _calcola_settlement_treno(mesi):
-                    righe = []
-                    for anno in range(_data_min_treno.year, _data_max_treno.year + 1):
-                        for mese in mesi:
-                            _tf_data = third_friday(anno, mese).date()
-                            if _tf_data < _data_min_treno or _tf_data > _data_max_treno:
-                                continue
-                            _valore, _data_usata = None, _tf_data
-                            for _delta in range(5):
-                                _d = _tf_data + dt.timedelta(days=_delta)
-                                if _d in _open_by_date_treno:
-                                    _valore, _data_usata = _open_by_date_treno[_d], _d
-                                    break
-                            if _valore is not None:
-                                righe.append({
-                                    'settlement_teorico': _tf_data, 'data_usata': _data_usata, 'valore': _valore
-                                })
-                    return pd.DataFrame(righe)
-
-                _settlement_mensili_treno = _calcola_settlement_treno(range(1, 13))
-                _settlement_trimestrali_treno = _calcola_settlement_treno([3, 6, 9, 12])
-
-                _fig_treno = go.Figure()
-                _fig_treno.add_trace(go.Candlestick(
-                    x=_df_bars_treno['time'], open=_df_bars_treno['open'], high=_df_bars_treno['high'],
-                    low=_df_bars_treno['low'], close=_df_bars_treno['close'], name='FTSEMIB',
-                    increasing_line_color='#34d399', decreasing_line_color='#f87171'
-                ))
-                if _mostra_mensili and not _settlement_mensili_treno.empty:
-                    _fig_treno.add_trace(go.Scatter(
-                        x=_settlement_mensili_treno['data_usata'], y=_settlement_mensili_treno['valore'],
-                        mode='markers', name='Settlement Mensile',
-                        marker=dict(color='#fbbf24', size=8, symbol='circle'),
-                        hovertemplate='%{x}<br>Settlement mensile (Open): %{y:,.2f}<extra></extra>'
-                    ))
-                if _mostra_trimestrali and not _settlement_trimestrali_treno.empty:
-                    _fig_treno.add_trace(go.Scatter(
-                        x=_settlement_trimestrali_treno['data_usata'], y=_settlement_trimestrali_treno['valore'],
-                        mode='lines+markers', name='Vero Trend (Trimestrale)',
-                        line=dict(color='#60a5fa', width=2, dash='dot'),
-                        marker=dict(color='#60a5fa', size=11, symbol='diamond'),
-                        hovertemplate='%{x}<br>Settlement trimestrale (Open): %{y:,.2f}<extra></extra>'
-                    ))
-                _fig_treno.update_layout(
-                    template='plotly_dark', height=650, margin=dict(l=10, r=10, t=30, b=10),
-                    xaxis_rangeslider_visible=False, hovermode='x unified',
-                    legend=dict(orientation='h', yanchor='bottom', y=1.02)
+                st.caption(
+                    "💡 Lo zoom (+) del grafico non riadatta automaticamente l'asse verticale: per restringere "
+                    "il periodo mostrato conviene usare il filtro qui sotto invece dello zoom."
                 )
-                st.plotly_chart(_fig_treno, width="stretch", key="treno_chart")
+                col_fp1, col_fp2 = st.columns([1, 1.4])
+                with col_fp1:
+                    _modalita_filtro_treno = st.radio(
+                        "Periodo da visualizzare", options=["Tutto", "Ultimi N giorni", "Da una data"],
+                        horizontal=True, key="treno_filtro_modalita"
+                    )
+                _df_prezzi_treno_filtrato = _df_prezzi_treno
+                if _modalita_filtro_treno == "Ultimi N giorni":
+                    with col_fp2:
+                        _n_giorni_treno = st.number_input(
+                            "Quanti giorni di calendario (dall'ultimo disponibile)",
+                            min_value=1, value=180, step=1, key="treno_n_giorni"
+                        )
+                    _cutoff_treno = _df_prezzi_treno['time'].max() - pd.Timedelta(days=int(_n_giorni_treno))
+                    _df_prezzi_treno_filtrato = _df_prezzi_treno[_df_prezzi_treno['time'] >= _cutoff_treno]
+                elif _modalita_filtro_treno == "Da una data":
+                    with col_fp2:
+                        _data_da_treno = st.date_input(
+                            "Mostra a partire da",
+                            value=_df_prezzi_treno['time'].min().date(),
+                            min_value=_df_prezzi_treno['time'].min().date(),
+                            max_value=_df_prezzi_treno['time'].max().date(),
+                            key="treno_data_da"
+                        )
+                    _df_prezzi_treno_filtrato = _df_prezzi_treno[_df_prezzi_treno['time'].dt.date >= _data_da_treno]
 
-                with st.expander("📋 Tabella settlement", expanded=False):
-                    col_tab1, col_tab2 = st.columns(2)
-                    with col_tab1:
-                        st.markdown("**Mensili**")
-                        if _settlement_mensili_treno.empty:
-                            st.caption("Nessuno nel periodo disponibile.")
-                        else:
-                            st.dataframe(
-                                _settlement_mensili_treno.sort_values('settlement_teorico', ascending=False),
-                                width="stretch", hide_index=True
-                            )
-                    with col_tab2:
-                        st.markdown("**Trimestrali (Vero Trend)**")
-                        if _settlement_trimestrali_treno.empty:
-                            st.caption("Nessuno nel periodo disponibile.")
-                        else:
-                            st.dataframe(
-                                _settlement_trimestrali_treno.sort_values('settlement_teorico', ascending=False),
-                                width="stretch", hide_index=True
-                            )
+                if len(_df_prezzi_treno_filtrato) < 2:
+                    st.info("Meno di due giorni nel periodo selezionato: allarga il filtro per vedere un grafico.")
+                else:
+                    col_t1, col_t2 = st.columns(2)
+                    with col_t1:
+                        _tf_treno = st.radio(
+                            "Timeframe barre", ["Daily", "Weekly", "Monthly"], horizontal=True, key="treno_timeframe"
+                        )
+                    with col_t2:
+                        _tipo_grafico_treno = st.radio(
+                            "Tipo grafico", ["Candele", "Barre"], horizontal=True, key="treno_tipo_grafico"
+                        )
+                    col_c1, col_c2, col_c3 = st.columns(3)
+                    with col_c1:
+                        _mostra_mensili = st.checkbox("Settlement mensili", value=True, key="treno_mostra_mensili")
+                    with col_c2:
+                        _mostra_trimestrali = st.checkbox("Settlement trimestrali (Vero Trend)", value=True, key="treno_mostra_trimestrali")
+                    with col_c3:
+                        _linea_mensili = st.checkbox("Congiungi i settlement mensili", value=False, key="treno_linea_mensili")
+
+                    if _tf_treno == "Weekly":
+                        _df_bars_treno = (
+                            _df_prezzi_treno_filtrato.set_index('time')
+                            .resample('W-FRI')
+                            .agg({'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last'})
+                            .dropna()
+                            .reset_index()
+                        )
+                    elif _tf_treno == "Monthly":
+                        _df_bars_treno = (
+                            _df_prezzi_treno_filtrato.set_index('time')
+                            .resample('ME')
+                            .agg({'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last'})
+                            .dropna()
+                            .reset_index()
+                        )
+                    else:
+                        _df_bars_treno = _df_prezzi_treno_filtrato.copy()
+
+                    _data_min_treno = _df_prezzi_treno_filtrato['time'].min().date()
+                    _data_max_treno = _df_prezzi_treno_filtrato['time'].max().date()
+                    _open_by_date_treno = dict(zip(_df_prezzi_treno_filtrato['time'].dt.date, _df_prezzi_treno_filtrato['open']))
+
+                    def _calcola_settlement_treno(mesi):
+                        righe = []
+                        for anno in range(_data_min_treno.year, _data_max_treno.year + 1):
+                            for mese in mesi:
+                                _tf_data = third_friday(anno, mese).date()
+                                if _tf_data < _data_min_treno or _tf_data > _data_max_treno:
+                                    continue
+                                _valore, _data_usata = None, _tf_data
+                                for _delta in range(5):
+                                    _d = _tf_data + dt.timedelta(days=_delta)
+                                    if _d in _open_by_date_treno:
+                                        _valore, _data_usata = _open_by_date_treno[_d], _d
+                                        break
+                                if _valore is not None:
+                                    righe.append({
+                                        'settlement_teorico': _tf_data, 'data_usata': _data_usata, 'valore': _valore
+                                    })
+                        return pd.DataFrame(righe).sort_values('data_usata').reset_index(drop=True)
+
+                    _settlement_mensili_treno = _calcola_settlement_treno(range(1, 13))
+                    _settlement_trimestrali_treno = _calcola_settlement_treno([3, 6, 9, 12])
+
+                    _fig_treno = go.Figure()
+                    if _tipo_grafico_treno == "Candele":
+                        _fig_treno.add_trace(go.Candlestick(
+                            x=_df_bars_treno['time'], open=_df_bars_treno['open'], high=_df_bars_treno['high'],
+                            low=_df_bars_treno['low'], close=_df_bars_treno['close'], name='FTSEMIB',
+                            increasing_line_color='#34d399', decreasing_line_color='#f87171'
+                        ))
+                    else:
+                        _fig_treno.add_trace(go.Ohlc(
+                            x=_df_bars_treno['time'], open=_df_bars_treno['open'], high=_df_bars_treno['high'],
+                            low=_df_bars_treno['low'], close=_df_bars_treno['close'], name='FTSEMIB',
+                            increasing_line_color='#34d399', decreasing_line_color='#f87171'
+                        ))
+                    if _mostra_mensili and not _settlement_mensili_treno.empty:
+                        _fig_treno.add_trace(go.Scatter(
+                            x=_settlement_mensili_treno['data_usata'], y=_settlement_mensili_treno['valore'],
+                            mode='lines+markers' if _linea_mensili else 'markers', name='Settlement Mensile',
+                            line=dict(color='#fbbf24', width=1, dash='dot') if _linea_mensili else None,
+                            marker=dict(color='#fbbf24', size=8, symbol='circle'),
+                            hovertemplate='%{x}<br>Settlement mensile (Open): %{y:,.2f}<extra></extra>'
+                        ))
+                    if _mostra_trimestrali and not _settlement_trimestrali_treno.empty:
+                        _fig_treno.add_trace(go.Scatter(
+                            x=_settlement_trimestrali_treno['data_usata'], y=_settlement_trimestrali_treno['valore'],
+                            mode='lines+markers', name='Vero Trend (Trimestrale)',
+                            line=dict(color='#60a5fa', width=2, dash='dot'),
+                            marker=dict(color='#60a5fa', size=11, symbol='diamond'),
+                            hovertemplate='%{x}<br>Settlement trimestrale (Open): %{y:,.2f}<extra></extra>'
+                        ))
+                    _fig_treno.update_layout(
+                        template='plotly_dark', height=650, margin=dict(l=10, r=10, t=30, b=10),
+                        xaxis_rangeslider_visible=False, hovermode='x unified',
+                        legend=dict(orientation='h', yanchor='bottom', y=1.02)
+                    )
+                    st.plotly_chart(_fig_treno, width="stretch", key="treno_chart")
+                    st.caption(
+                        f"{len(_df_bars_treno)} barre {_tf_treno.lower()} mostrate, periodo "
+                        f"{_data_min_treno.strftime('%d/%m/%Y')} — {_data_max_treno.strftime('%d/%m/%Y')}."
+                    )
+
+                    with st.expander("📋 Tabella settlement", expanded=False):
+                        col_tab1, col_tab2 = st.columns(2)
+                        with col_tab1:
+                            st.markdown("**Mensili**")
+                            if _settlement_mensili_treno.empty:
+                                st.caption("Nessuno nel periodo disponibile.")
+                            else:
+                                st.dataframe(
+                                    _settlement_mensili_treno.sort_values('settlement_teorico', ascending=False),
+                                    width="stretch", hide_index=True
+                                )
+                        with col_tab2:
+                            st.markdown("**Trimestrali (Vero Trend)**")
+                            if _settlement_trimestrali_treno.empty:
+                                st.caption("Nessuno nel periodo disponibile.")
+                            else:
+                                st.dataframe(
+                                    _settlement_trimestrali_treno.sort_values('settlement_teorico', ascending=False),
+                                    width="stretch", hide_index=True
+                                )
+
 
 
 
