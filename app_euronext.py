@@ -1000,22 +1000,58 @@ ordini di grandezza più alto: sullo stesso asse il Volume sparirebbe schiacciat
             st.info("Nessuno storico ancora disponibile: premi 'Ricostruisci storico da cartella dati/' qui sopra, "
                      "oppure carica almeno un file opzioni al punto 1 sopra la sidebar.")
         else:
-            if len(_storico_totali) >= 2:
+            _storico_totali = _storico_totali.copy()
+            _storico_totali['data'] = _storico_totali['data'].astype(str)
+            _storico_totali['_data_dt'] = pd.to_datetime(_storico_totali['data'])
+
+            st.caption(
+                "💡 Lo zoom (+) del grafico non riadatta automaticamente l'asse verticale: per restringere "
+                "il periodo mostrato conviene usare il filtro qui sotto invece dello zoom."
+            )
+            col_f1, col_f2 = st.columns([1, 1.4])
+            with col_f1:
+                _modalita_filtro_storico = st.radio(
+                    "Periodo da visualizzare", options=["Tutto", "Ultimi N giorni", "Da una data"],
+                    horizontal=True, key="storico_totali_filtro_modalita"
+                )
+            _storico_filtrato = _storico_totali
+            if _modalita_filtro_storico == "Ultimi N giorni":
+                with col_f2:
+                    _n_giorni_filtro_storico = st.number_input(
+                        "Quanti giorni di calendario (dall'ultimo disponibile)",
+                        min_value=1, value=60, step=1, key="storico_totali_n_giorni"
+                    )
+                _cutoff_storico = _storico_totali['_data_dt'].max() - pd.Timedelta(days=int(_n_giorni_filtro_storico))
+                _storico_filtrato = _storico_totali[_storico_totali['_data_dt'] >= _cutoff_storico]
+            elif _modalita_filtro_storico == "Da una data":
+                with col_f2:
+                    _data_da_storico = st.date_input(
+                        "Mostra a partire da",
+                        value=_storico_totali['_data_dt'].min().date(),
+                        min_value=_storico_totali['_data_dt'].min().date(),
+                        max_value=_storico_totali['_data_dt'].max().date(),
+                        key="storico_totali_data_da"
+                    )
+                _storico_filtrato = _storico_totali[_storico_totali['_data_dt'].dt.date >= _data_da_storico]
+
+            _storico_filtrato = _storico_filtrato.drop(columns=['_data_dt']).reset_index(drop=True)
+
+            if len(_storico_filtrato) >= 2:
                 _fig = make_subplots(
                     rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.06,
                     row_heights=[0.34, 0.33, 0.33],
                     subplot_titles=("Spot FTSEMIB", "Open Interest totale", "Volume totale")
                 )
                 _fig.add_trace(go.Scatter(
-                    x=_storico_totali['data'], y=_storico_totali['spot'], mode='lines+markers', name='Spot',
+                    x=_storico_filtrato['data'], y=_storico_filtrato['spot'], mode='lines+markers', name='Spot',
                     line=dict(color='#60a5fa'), hovertemplate='%{x}<br>Spot: %{y:,.2f}<extra></extra>'
                 ), row=1, col=1)
                 _fig.add_trace(go.Scatter(
-                    x=_storico_totali['data'], y=_storico_totali['oi_totale'], mode='lines+markers', name='OI totale',
+                    x=_storico_filtrato['data'], y=_storico_filtrato['oi_totale'], mode='lines+markers', name='OI totale',
                     line=dict(color='#34d399'), hovertemplate='%{x}<br>OI totale: %{y:,.0f}<extra></extra>'
                 ), row=2, col=1)
                 _fig.add_trace(go.Scatter(
-                    x=_storico_totali['data'], y=_storico_totali['volume_totale'], mode='lines+markers', name='Volume totale',
+                    x=_storico_filtrato['data'], y=_storico_filtrato['volume_totale'], mode='lines+markers', name='Volume totale',
                     line=dict(color='#f97316'), hovertemplate='%{x}<br>Volume totale: %{y:,.0f}<extra></extra>'
                 ), row=3, col=1)
                 _fig.update_layout(
@@ -1026,14 +1062,17 @@ ordini di grandezza più alto: sullo stesso asse il Volume sparirebbe schiacciat
                                    spikethickness=1, spikedash='dot', spikecolor='#94a3b8')
                 st.plotly_chart(_fig, width="stretch", key="storico_totali_chart")
                 st.caption(
+                    f"{len(_storico_filtrato)} giorni mostrati su {len(_storico_totali)} totali disponibili. "
                     "Tre pannelli allineati sulla stessa data, ciascuno con la propria scala. Passa il cursore "
                     "su un punto qualsiasi: la data compare in alto al tooltip, con una linea verticale che "
                     "attraversa tutti e tre i pannelli per allineare visivamente lo stesso giorno. Confronta se "
                     "un salto di OI o Volume coincide con un movimento marcato dello spot in alto."
                 )
+            elif len(_storico_filtrato) == 1:
+                st.info("Solo un giorno nel periodo selezionato: allarga il filtro per vedere un grafico.")
             else:
-                st.info("Serve almeno un secondo giorno per mostrare il grafico.")
-            st.dataframe(_storico_totali.sort_values('data', ascending=False), width="stretch", hide_index=True)
+                st.info("Nessun giorno nel periodo selezionato.")
+            st.dataframe(_storico_filtrato.sort_values('data', ascending=False), width="stretch", hide_index=True)
 
     # ========================= TAB NOTE =========================
     with tab_note:
