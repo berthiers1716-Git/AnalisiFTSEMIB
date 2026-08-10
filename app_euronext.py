@@ -24,7 +24,7 @@ from euronext_module import (
     reconcile_log, update_log_fields, log_totali_giornalieri, ricostruisci_storico_totali,
     aggiungi_nota_diario, elimina_nota_diario, modifica_nota_diario, _bs_price,
     estimate_iv_multi_day_batch, ricostruisci_storico_stats, aggiorna_riga_oggi_stats,
-    third_friday
+    third_friday, rileva_pivot_alternati, classifica_durata_cicli
 )
 from documentazione_module import (
     impacchetta_html, elenca_markdown, elenca_pdf, elenca_html_pronti, elenca_html_sorgenti
@@ -1589,61 +1589,8 @@ secondo il metodo di Treno — oscillazione standard e oscillazione inversa (il 
                         _finestra_conferma_treno = max(1, round(_ciclo_barre_treno / 4))
                         st.caption(f"Finestra di conferma usata: **{_finestra_conferma_treno} barre** senza nuovo estremo.")
 
-                        def _rileva_pivot_alternati_treno(df_prezzi, finestra, modo_iniziale='alto'):
-                            """
-                            Alterna la ricerca tra massimo e minimo (come il metodo Treno): confermato un
-                            massimo (nessun nuovo massimo per 'finestra' barre), si passa a cercare il minimo
-                            successivo, e viceversa. Evita di confermare più "massimi" consecutivi durante un
-                            trend continuo in discesa (o più "minimi" durante un trend continuo in salita), che
-                            sarebbero solo artefatti del conteggio e non veri punti di svolta.
-                            Nota: al cambio di fase il conteggio riparte da zero (non retroattivo sulle barre
-                            già passate), quindi la conferma può ritardare leggermente subito dopo un cambio -
-                            approssimazione accettabile per questa funzione sperimentale.
-                            """
-                            n = len(df_prezzi)
-                            if n < 2:
-                                return pd.DataFrame(columns=['idx', 'time', 'valore']), pd.DataFrame(columns=['idx', 'time', 'valore'])
-                            highs = df_prezzi['high'].to_numpy()
-                            lows = df_prezzi['low'].to_numpy()
-                            times = df_prezzi['time'].to_numpy()
-                            massimi, minimi = [], []
-                            modo = modo_iniziale
-                            candidato_idx = 0
-                            candidato_val = highs[0] if modo == 'alto' else lows[0]
-                            contatore = 0
-                            for i in range(1, n):
-                                if modo == 'alto':
-                                    val = highs[i]
-                                    if val > candidato_val:
-                                        candidato_val, candidato_idx, contatore = val, i, 0
-                                    else:
-                                        contatore += 1
-                                        if contatore >= finestra:
-                                            massimi.append({'idx': candidato_idx, 'time': times[candidato_idx], 'valore': candidato_val})
-                                            modo = 'basso'
-                                            _tratto = lows[candidato_idx:i + 1]
-                                            _rel = int(np.argmin(_tratto))
-                                            candidato_idx = candidato_idx + _rel
-                                            candidato_val = lows[candidato_idx]
-                                            contatore = 0
-                                else:
-                                    val = lows[i]
-                                    if val < candidato_val:
-                                        candidato_val, candidato_idx, contatore = val, i, 0
-                                    else:
-                                        contatore += 1
-                                        if contatore >= finestra:
-                                            minimi.append({'idx': candidato_idx, 'time': times[candidato_idx], 'valore': candidato_val})
-                                            modo = 'alto'
-                                            _tratto = highs[candidato_idx:i + 1]
-                                            _rel = int(np.argmax(_tratto))
-                                            candidato_idx = candidato_idx + _rel
-                                            candidato_val = highs[candidato_idx]
-                                            contatore = 0
-                            return pd.DataFrame(massimi), pd.DataFrame(minimi)
-
                         _df_daily_completo_treno = _df_prezzi_treno.sort_values('time').reset_index(drop=True)
-                        _pivot_alti_full, _pivot_bassi_full = _rileva_pivot_alternati_treno(
+                        _pivot_alti_full, _pivot_bassi_full = rileva_pivot_alternati(
                             _df_daily_completo_treno, _finestra_conferma_treno
                         )
                         if _mostra_ciclo_inverso and not _pivot_alti_full.empty:
@@ -1665,30 +1612,6 @@ secondo il metodo di Treno — oscillazione standard e oscillazione inversa (il 
                         _min_barre_ciclo_treno = _ciclo_barre_treno * 3 / 4
                         _max_barre_ciclo_treno = _ciclo_barre_treno * 5 / 4
 
-                        def _classifica_durata_cicli_treno(df_pivot_full, minimo, massimo, data_min, data_max):
-                            if len(df_pivot_full) < 2:
-                                return pd.DataFrame(columns=['Da', 'A', 'Barre', 'Classificazione'])
-                            _ord = df_pivot_full.sort_values('idx').reset_index(drop=True)
-                            righe = []
-                            for k in range(1, len(_ord)):
-                                _t_prev, _idx_prev = _ord.loc[k - 1, 'time'], _ord.loc[k - 1, 'idx']
-                                _t_curr, _idx_curr = _ord.loc[k, 'time'], _ord.loc[k, 'idx']
-                                _t_curr_date = pd.Timestamp(_t_curr).date()
-                                if _t_curr_date < data_min or _t_curr_date > data_max:
-                                    continue
-                                _gap = int(_idx_curr - _idx_prev)
-                                if _gap < minimo:
-                                    _classe = "🔴 Troppo corto"
-                                elif _gap > massimo:
-                                    _classe = "🟡 Lingua (elongato)"
-                                else:
-                                    _classe = "🟢 Regolare"
-                                righe.append({
-                                    'Da': pd.Timestamp(_t_prev).date(), 'A': _t_curr_date,
-                                    'Barre': _gap, 'Classificazione': _classe
-                                })
-                            return pd.DataFrame(righe)
-
                         with st.expander("📏 Durata dei cicli rilevati (ciclica classica)", expanded=False):
                             st.caption(
                                 f"Con ciclo nominale di {_ciclo_barre_treno:.0f} barre, un ciclo completo (tra due "
@@ -1700,9 +1623,9 @@ secondo il metodo di Treno — oscillazione standard e oscillazione inversa (il 
                             )
                             if _mostra_ciclo_inverso:
                                 st.markdown("**Cicli inversi (tra massimi consecutivi)**")
-                                _tab_durata_alti = _classifica_durata_cicli_treno(
-                                    _pivot_alti_full, _min_barre_ciclo_treno, _max_barre_ciclo_treno,
-                                    _data_min_treno, _data_max_treno
+                                _tab_durata_alti = classifica_durata_cicli(
+                                    _pivot_alti_full, _ciclo_barre_treno,
+                                    data_min=_data_min_treno, data_max=_data_max_treno
                                 )
                                 if _tab_durata_alti.empty:
                                     st.caption("Nessun ciclo completo nel periodo mostrato.")
@@ -1710,9 +1633,9 @@ secondo il metodo di Treno — oscillazione standard e oscillazione inversa (il 
                                     st.dataframe(_tab_durata_alti, width="stretch", hide_index=True)
                             if _mostra_ciclo_standard:
                                 st.markdown("**Cicli standard (tra minimi consecutivi)**")
-                                _tab_durata_bassi = _classifica_durata_cicli_treno(
-                                    _pivot_bassi_full, _min_barre_ciclo_treno, _max_barre_ciclo_treno,
-                                    _data_min_treno, _data_max_treno
+                                _tab_durata_bassi = classifica_durata_cicli(
+                                    _pivot_bassi_full, _ciclo_barre_treno,
+                                    data_min=_data_min_treno, data_max=_data_max_treno
                                 )
                                 if _tab_durata_bassi.empty:
                                     st.caption("Nessun ciclo completo nel periodo mostrato.")

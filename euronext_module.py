@@ -845,3 +845,115 @@ def aggiorna_riga_oggi_stats(log_path, expiration_date, analysis_date, spot, max
 
     df_scadenza = log_df[log_df['scadenza'].astype(str) == scadenza_str].sort_values('data').reset_index(drop=True)
     return df_scadenza
+
+
+# =============================================================================
+# RILEVAZIONE CICLI (metodo Treno generalizzato) - condivisa tra il tab Treno
+# e il futuro tab Cicli, parametrizzata per permettere criteri diversi senza
+# duplicare la logica.
+# =============================================================================
+
+def rileva_pivot_alternati(df_prezzi, finestra, modo_iniziale='alto',
+                            colonna_high='high', colonna_low='low', colonna_time='time'):
+    """
+    Alterna la ricerca tra massimo e minimo (come il metodo Treno): confermato un
+    massimo (nessun nuovo massimo per 'finestra' barre), si passa a cercare il
+    minimo successivo, e viceversa. Evita di confermare piu' "massimi" consecutivi
+    durante un trend continuo in discesa (o piu' "minimi" durante un trend continuo
+    in salita), che sarebbero solo artefatti del conteggio e non veri punti di svolta.
+
+    df_prezzi: DataFrame con almeno le colonne high/low/time (nomi configurabili,
+    cosi' la stessa funzione si presta anche a barre aggregate a N giorni, non solo
+    al daily grezzo).
+
+    Nota: al cambio di fase il conteggio riparte da zero (non retroattivo sulle
+    barre gia' passate), quindi la conferma puo' ritardare leggermente subito dopo
+    un cambio - approssimazione accettabile per questa funzione sperimentale.
+
+    Returns: (df_massimi, df_minimi), ciascuno con colonne idx/time/valore.
+    """
+    n = len(df_prezzi)
+    if n < 2:
+        return pd.DataFrame(columns=['idx', 'time', 'valore']), pd.DataFrame(columns=['idx', 'time', 'valore'])
+    highs = df_prezzi[colonna_high].to_numpy()
+    lows = df_prezzi[colonna_low].to_numpy()
+    times = df_prezzi[colonna_time].to_numpy()
+    massimi, minimi = [], []
+    modo = modo_iniziale
+    candidato_idx = 0
+    candidato_val = highs[0] if modo == 'alto' else lows[0]
+    contatore = 0
+    for i in range(1, n):
+        if modo == 'alto':
+            val = highs[i]
+            if val > candidato_val:
+                candidato_val, candidato_idx, contatore = val, i, 0
+            else:
+                contatore += 1
+                if contatore >= finestra:
+                    massimi.append({'idx': candidato_idx, 'time': times[candidato_idx], 'valore': candidato_val})
+                    modo = 'basso'
+                    _tratto = lows[candidato_idx:i + 1]
+                    _rel = int(np.argmin(_tratto))
+                    candidato_idx = candidato_idx + _rel
+                    candidato_val = lows[candidato_idx]
+                    contatore = 0
+        else:
+            val = lows[i]
+            if val < candidato_val:
+                candidato_val, candidato_idx, contatore = val, i, 0
+            else:
+                contatore += 1
+                if contatore >= finestra:
+                    minimi.append({'idx': candidato_idx, 'time': times[candidato_idx], 'valore': candidato_val})
+                    modo = 'alto'
+                    _tratto = highs[candidato_idx:i + 1]
+                    _rel = int(np.argmax(_tratto))
+                    candidato_idx = candidato_idx + _rel
+                    candidato_val = highs[candidato_idx]
+                    contatore = 0
+    return pd.DataFrame(massimi), pd.DataFrame(minimi)
+
+
+def classifica_durata_cicli(df_pivot_full, ciclo_barre, rapporto_min=0.75, rapporto_max=1.25,
+                             data_min=None, data_max=None):
+    """
+    Classifica la durata (in barre) tra pivot consecutivi dello stesso tipo secondo
+    la ciclica classica (regola Migliorino di default: 3/4 - 5/4 della durata
+    nominale). rapporto_min/rapporto_max sono configurabili per permettere criteri
+    diversi in contesti diversi (es. il tab Cicli potrebbe voler essere piu' o meno
+    permissivo del tab Treno).
+
+    df_pivot_full: DataFrame con colonne idx/time/valore (l'output, per un solo
+    tipo - massimi o minimi - di rileva_pivot_alternati).
+    data_min/data_max: se forniti (date), limita l'output ai pivot di ARRIVO (colonna
+    'A') compresi in quel range; se None, nessun filtro periodo.
+
+    Returns: DataFrame con colonne Da/A/Barre/Classificazione.
+    """
+    if len(df_pivot_full) < 2:
+        return pd.DataFrame(columns=['Da', 'A', 'Barre', 'Classificazione'])
+    minimo = ciclo_barre * rapporto_min
+    massimo = ciclo_barre * rapporto_max
+    _ord = df_pivot_full.sort_values('idx').reset_index(drop=True)
+    righe = []
+    for k in range(1, len(_ord)):
+        _t_prev, _idx_prev = _ord.loc[k - 1, 'time'], _ord.loc[k - 1, 'idx']
+        _t_curr, _idx_curr = _ord.loc[k, 'time'], _ord.loc[k, 'idx']
+        _t_curr_date = pd.Timestamp(_t_curr).date()
+        if data_min is not None and _t_curr_date < data_min:
+            continue
+        if data_max is not None and _t_curr_date > data_max:
+            continue
+        _gap = int(_idx_curr - _idx_prev)
+        if _gap < minimo:
+            _classe = "🔴 Troppo corto"
+        elif _gap > massimo:
+            _classe = "🟡 Lingua (elongato)"
+        else:
+            _classe = "🟢 Regolare"
+        righe.append({
+            'Da': pd.Timestamp(_t_prev).date(), 'A': _t_curr_date,
+            'Barre': _gap, 'Classificazione': _classe
+        })
+    return pd.DataFrame(righe)
