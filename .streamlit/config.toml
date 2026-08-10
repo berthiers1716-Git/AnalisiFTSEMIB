@@ -14,3 +14,6 @@ backgroundColor          = "#0e1117"   # sfondo principale (= paper_bgcolor dei 
 secondaryBackgroundColor = "#111827"   # sidebar, metriche, widget (= plot_bgcolor)
 textColor                = "#e5e7eb"   # testo
 font                     = "sans-serif"
+
+[server]
+enableStaticServing = true

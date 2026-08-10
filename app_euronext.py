@@ -26,6 +26,9 @@ from euronext_module import (
     estimate_iv_multi_day_batch, ricostruisci_storico_stats, aggiorna_riga_oggi_stats,
     third_friday
 )
+from documentazione_module import (
+    impacchetta_html, elenca_markdown, elenca_pdf, elenca_html_pronti, elenca_html_sorgenti
+)
 from calculations_module import (
     calculate_gex_metrics, calculate_oi_walls, calculate_max_pain,
     calculate_pc_ratios, calculate_expected_move, calculate_volume_profile,
@@ -265,6 +268,10 @@ DATI_FOLDER_DEFAULT = "dati"
 TOTALI_LOG_PATH = "dati_locali/storico_totali.csv"
 STATS_LOG_PATH = "dati_locali/storico_stats.csv"
 TRENO_UFFICIALE_PATH = "dati_locali/treno_settlement_ufficiale.csv"
+DOC_MD_FOLDER = "documentazione/md"
+DOC_HTML_SRC_FOLDER = "documentazione/html_sorgente"
+DOC_HTML_READY_FOLDER = "documentazione/html_pronto"
+DOC_PDF_FOLDER = "static/pdf"
 
 if df_raw is not None and spot_price > 0:
     log_totali_giornalieri(df_raw, analysis_date, TOTALI_LOG_PATH, spot=spot_price)
@@ -337,10 +344,11 @@ if df_raw is not None and spot_price > 0:
             dex_metrics      = calculate_dex_metrics(df_selected_expiry_oi, spot_price)
             vex_metrics      = calculate_vex_metrics(df_selected_expiry_oi, spot_price, risk_free_rate, dividend_yield)
 
-    tab_summary, tab_gex, tab_vex_dex, tab_oi_vol, tab_stats, tab_vol_surf, tab_eventi, tab_storico, tab_note, tab_decay, tab_ripart, tab_treno = st.tabs([
+    tab_summary, tab_gex, tab_vex_dex, tab_oi_vol, tab_stats, tab_vol_surf, tab_eventi, tab_storico, tab_note, tab_decay, tab_ripart, tab_treno, tab_teoria = st.tabs([
         '📋 Summary', '📊 Gamma (GEX)', '🧩 Vanna & Delta (VEX/DEX)',
         '🎯 Support/Res (OI & Vol)', '📉 Stats', '📈 Vol Surface', '📋 Eventi Volume',
-        '📈 Andamento Storico', '📝 Note', '⏳ Decadimento', '⚖️ Ripartizione OI', '🚂 Treno'
+        '📈 Andamento Storico', '📝 Note', '⏳ Decadimento', '⚖️ Ripartizione OI', '🚂 Treno',
+        '📚 Teoria'
     ])
 
     # ========================= TAB SUMMARY =========================
@@ -1530,6 +1538,9 @@ secondo il metodo di Treno — oscillazione standard e oscillazione inversa (il 
                 if len(_df_prezzi_treno_filtrato) < 2:
                     st.info("Meno di due giorni nel periodo selezionato: allarga il filtro per vedere un grafico.")
                 else:
+                    _data_min_treno = _df_prezzi_treno_filtrato['time'].min().date()
+                    _data_max_treno = _df_prezzi_treno_filtrato['time'].max().date()
+
                     col_t1, col_t2 = st.columns(2)
                     with col_t1:
                         _tf_treno = st.radio(
@@ -1546,6 +1557,167 @@ secondo il metodo di Treno — oscillazione standard e oscillazione inversa (il 
                         _mostra_trimestrali = st.checkbox("Settlement trimestrali (Vero Trend)", value=True, key="treno_mostra_trimestrali")
                     with col_c3:
                         _linea_mensili = st.checkbox("Congiungi i settlement mensili", value=False, key="treno_linea_mensili")
+
+                    _pivot_alti_treno = pd.DataFrame(columns=['idx', 'time', 'valore'])
+                    _pivot_bassi_treno = pd.DataFrame(columns=['idx', 'time', 'valore'])
+                    if _tf_treno == "Daily":
+                        st.markdown("**Rilevazione cicli (metodo Treno, generalizzato) — sperimentale**")
+                        st.caption(
+                            "Un massimo (o minimo) si considera partenza di un ciclo quando resta 'imbattuto' per "
+                            "almeno ¼ della durata del ciclo in esame — es. ~32 barre daily per un ciclo mensile → "
+                            "8 barre di conferma; lo stesso rapporto vale a qualunque scala (un ciclo di 8 anni "
+                            "richiede ~2 anni senza nuovo estremo). Qui conta solo il tempo (le inside bar non "
+                            "vengono escluse). La ricerca **alterna** massimo e minimo (come nel metodo originale): "
+                            "confermato un massimo, si cerca il minimo successivo, e viceversa — questo evita falsi "
+                            "segnali ripetuti durante un trend continuo in una sola direzione. Calcolato sempre "
+                            "sull'intera serie storica, non solo sul periodo filtrato, per evitare artefatti ai "
+                            "bordi del filtro."
+                        )
+                        col_cy1, col_cy2, col_cy3 = st.columns(3)
+                        with col_cy1:
+                            _ciclo_barre_treno = st.number_input(
+                                "Lunghezza ciclo (barre daily)", min_value=4, value=32, step=1, key="treno_ciclo_barre"
+                            )
+                        with col_cy2:
+                            _mostra_ciclo_inverso = st.checkbox(
+                                "Partenze cicli inversi (da massimi)", value=True, key="treno_ciclo_inverso"
+                            )
+                        with col_cy3:
+                            _mostra_ciclo_standard = st.checkbox(
+                                "Partenze cicli standard (da minimi)", value=False, key="treno_ciclo_standard"
+                            )
+                        _finestra_conferma_treno = max(1, round(_ciclo_barre_treno / 4))
+                        st.caption(f"Finestra di conferma usata: **{_finestra_conferma_treno} barre** senza nuovo estremo.")
+
+                        def _rileva_pivot_alternati_treno(df_prezzi, finestra, modo_iniziale='alto'):
+                            """
+                            Alterna la ricerca tra massimo e minimo (come il metodo Treno): confermato un
+                            massimo (nessun nuovo massimo per 'finestra' barre), si passa a cercare il minimo
+                            successivo, e viceversa. Evita di confermare più "massimi" consecutivi durante un
+                            trend continuo in discesa (o più "minimi" durante un trend continuo in salita), che
+                            sarebbero solo artefatti del conteggio e non veri punti di svolta.
+                            Nota: al cambio di fase il conteggio riparte da zero (non retroattivo sulle barre
+                            già passate), quindi la conferma può ritardare leggermente subito dopo un cambio -
+                            approssimazione accettabile per questa funzione sperimentale.
+                            """
+                            n = len(df_prezzi)
+                            if n < 2:
+                                return pd.DataFrame(columns=['idx', 'time', 'valore']), pd.DataFrame(columns=['idx', 'time', 'valore'])
+                            highs = df_prezzi['high'].to_numpy()
+                            lows = df_prezzi['low'].to_numpy()
+                            times = df_prezzi['time'].to_numpy()
+                            massimi, minimi = [], []
+                            modo = modo_iniziale
+                            candidato_idx = 0
+                            candidato_val = highs[0] if modo == 'alto' else lows[0]
+                            contatore = 0
+                            for i in range(1, n):
+                                if modo == 'alto':
+                                    val = highs[i]
+                                    if val > candidato_val:
+                                        candidato_val, candidato_idx, contatore = val, i, 0
+                                    else:
+                                        contatore += 1
+                                        if contatore >= finestra:
+                                            massimi.append({'idx': candidato_idx, 'time': times[candidato_idx], 'valore': candidato_val})
+                                            modo = 'basso'
+                                            _tratto = lows[candidato_idx:i + 1]
+                                            _rel = int(np.argmin(_tratto))
+                                            candidato_idx = candidato_idx + _rel
+                                            candidato_val = lows[candidato_idx]
+                                            contatore = 0
+                                else:
+                                    val = lows[i]
+                                    if val < candidato_val:
+                                        candidato_val, candidato_idx, contatore = val, i, 0
+                                    else:
+                                        contatore += 1
+                                        if contatore >= finestra:
+                                            minimi.append({'idx': candidato_idx, 'time': times[candidato_idx], 'valore': candidato_val})
+                                            modo = 'alto'
+                                            _tratto = highs[candidato_idx:i + 1]
+                                            _rel = int(np.argmax(_tratto))
+                                            candidato_idx = candidato_idx + _rel
+                                            candidato_val = highs[candidato_idx]
+                                            contatore = 0
+                            return pd.DataFrame(massimi), pd.DataFrame(minimi)
+
+                        _df_daily_completo_treno = _df_prezzi_treno.sort_values('time').reset_index(drop=True)
+                        _pivot_alti_full, _pivot_bassi_full = _rileva_pivot_alternati_treno(
+                            _df_daily_completo_treno, _finestra_conferma_treno
+                        )
+                        if _mostra_ciclo_inverso and not _pivot_alti_full.empty:
+                            _pivot_alti_treno = _pivot_alti_full[
+                                (pd.to_datetime(_pivot_alti_full['time']).dt.date >= _data_min_treno) &
+                                (pd.to_datetime(_pivot_alti_full['time']).dt.date <= _data_max_treno)
+                            ]
+                        if _mostra_ciclo_standard and not _pivot_bassi_full.empty:
+                            _pivot_bassi_treno = _pivot_bassi_full[
+                                (pd.to_datetime(_pivot_bassi_full['time']).dt.date >= _data_min_treno) &
+                                (pd.to_datetime(_pivot_bassi_full['time']).dt.date <= _data_max_treno)
+                            ]
+
+                        # Classificazione della durata di ciascun ciclo completo (pivot dello stesso tipo
+                        # consecutivi) secondo la ciclica classica: un ciclo "regolare" dura tra 3/4 e 5/4
+                        # della durata nominale; sotto e' troppo corto (probabile rumore/sotto-ciclo), sopra
+                        # e' una "lingua" (elongazione) - concetti distinti dal filtro di ampiezza (che valuta
+                        # il prezzo, non il tempo): i due si completano a vicenda.
+                        _min_barre_ciclo_treno = _ciclo_barre_treno * 3 / 4
+                        _max_barre_ciclo_treno = _ciclo_barre_treno * 5 / 4
+
+                        def _classifica_durata_cicli_treno(df_pivot_full, minimo, massimo, data_min, data_max):
+                            if len(df_pivot_full) < 2:
+                                return pd.DataFrame(columns=['Da', 'A', 'Barre', 'Classificazione'])
+                            _ord = df_pivot_full.sort_values('idx').reset_index(drop=True)
+                            righe = []
+                            for k in range(1, len(_ord)):
+                                _t_prev, _idx_prev = _ord.loc[k - 1, 'time'], _ord.loc[k - 1, 'idx']
+                                _t_curr, _idx_curr = _ord.loc[k, 'time'], _ord.loc[k, 'idx']
+                                _t_curr_date = pd.Timestamp(_t_curr).date()
+                                if _t_curr_date < data_min or _t_curr_date > data_max:
+                                    continue
+                                _gap = int(_idx_curr - _idx_prev)
+                                if _gap < minimo:
+                                    _classe = "🔴 Troppo corto"
+                                elif _gap > massimo:
+                                    _classe = "🟡 Lingua (elongato)"
+                                else:
+                                    _classe = "🟢 Regolare"
+                                righe.append({
+                                    'Da': pd.Timestamp(_t_prev).date(), 'A': _t_curr_date,
+                                    'Barre': _gap, 'Classificazione': _classe
+                                })
+                            return pd.DataFrame(righe)
+
+                        with st.expander("📏 Durata dei cicli rilevati (ciclica classica)", expanded=False):
+                            st.caption(
+                                f"Con ciclo nominale di {_ciclo_barre_treno:.0f} barre, un ciclo completo (tra due "
+                                f"pivot consecutivi dello stesso tipo) si considera **regolare** tra "
+                                f"**{_min_barre_ciclo_treno:.0f}** e **{_max_barre_ciclo_treno:.0f}** barre (3/4 - "
+                                f"5/4 del nominale). Sotto: probabile rumore/sotto-ciclo. Sopra: lingua "
+                                f"(elongazione) — non necessariamente sbagliato, ma da guardare insieme "
+                                f"all'ampiezza del movimento, non solo al tempo."
+                            )
+                            if _mostra_ciclo_inverso:
+                                st.markdown("**Cicli inversi (tra massimi consecutivi)**")
+                                _tab_durata_alti = _classifica_durata_cicli_treno(
+                                    _pivot_alti_full, _min_barre_ciclo_treno, _max_barre_ciclo_treno,
+                                    _data_min_treno, _data_max_treno
+                                )
+                                if _tab_durata_alti.empty:
+                                    st.caption("Nessun ciclo completo nel periodo mostrato.")
+                                else:
+                                    st.dataframe(_tab_durata_alti, width="stretch", hide_index=True)
+                            if _mostra_ciclo_standard:
+                                st.markdown("**Cicli standard (tra minimi consecutivi)**")
+                                _tab_durata_bassi = _classifica_durata_cicli_treno(
+                                    _pivot_bassi_full, _min_barre_ciclo_treno, _max_barre_ciclo_treno,
+                                    _data_min_treno, _data_max_treno
+                                )
+                                if _tab_durata_bassi.empty:
+                                    st.caption("Nessun ciclo completo nel periodo mostrato.")
+                                else:
+                                    st.dataframe(_tab_durata_bassi, width="stretch", hide_index=True)
 
                     if _tf_treno == "Weekly":
                         _df_bars_treno = (
@@ -1566,8 +1738,6 @@ secondo il metodo di Treno — oscillazione standard e oscillazione inversa (il 
                     else:
                         _df_bars_treno = _df_prezzi_treno_filtrato.copy()
 
-                    _data_min_treno = _df_prezzi_treno_filtrato['time'].min().date()
-                    _data_max_treno = _df_prezzi_treno_filtrato['time'].max().date()
                     _open_by_date_treno = dict(zip(_df_prezzi_treno_filtrato['time'].dt.date, _df_prezzi_treno_filtrato['open']))
 
                     def _calcola_settlement_treno(mesi):
@@ -1666,6 +1836,20 @@ secondo il metodo di Treno — oscillazione standard e oscillazione inversa (il 
                             line=dict(color='#60a5fa', width=2, dash='dot'),
                             marker=dict(color='#60a5fa', size=11, symbol='diamond'),
                             hovertemplate='%{x}<br>Settlement trimestrale (Open): %{y:,.2f}<extra></extra>'
+                        ))
+                    if not _pivot_alti_treno.empty:
+                        _fig_treno.add_trace(go.Scatter(
+                            x=_pivot_alti_treno['time'], y=_pivot_alti_treno['valore'],
+                            mode='markers', name='Partenza ciclo inverso (massimo)',
+                            marker=dict(color='#c084fc', size=13, symbol='triangle-down'),
+                            hovertemplate='%{x}<br>Massimo confermato: %{y:,.2f}<extra></extra>'
+                        ))
+                    if not _pivot_bassi_treno.empty:
+                        _fig_treno.add_trace(go.Scatter(
+                            x=_pivot_bassi_treno['time'], y=_pivot_bassi_treno['valore'],
+                            mode='markers', name='Partenza ciclo standard (minimo)',
+                            marker=dict(color='#38bdf8', size=13, symbol='triangle-up'),
+                            hovertemplate='%{x}<br>Minimo confermato: %{y:,.2f}<extra></extra>'
                         ))
                     _fig_treno.update_layout(
                         template='plotly_dark', height=650, margin=dict(l=10, r=10, t=30, b=10),
@@ -1773,6 +1957,97 @@ secondo il metodo di Treno — oscillazione standard e oscillazione inversa (il 
                                 }
                             )
                             st.dataframe(_tab_scostamento_treno.round(2), width="stretch", hide_index=True)
+
+    # ========================= TAB TEORIA =========================
+    with tab_teoria:
+        st.header("📚 Teoria e Documentazione")
+
+        with st.expander("ℹ️ Come funziona / come aggiungere un documento", expanded=False):
+            st.markdown(
+                f"""
+Tre tipi di risorse, gestiti in modo diverso:
+
+- **📝 Markdown** — copia il file `.md` in `{DOC_MD_FOLDER}/`. Compare subito
+  nell'elenco al prossimo ricaricamento della pagina.
+- **📄 PDF** — copia il file `.pdf` in `{DOC_PDF_FOLDER}/`. Richiede
+  `enableStaticServing = true` in `.streamlit/config.toml` (già impostato in
+  questo progetto). Si apre in una nuova scheda del browser.
+- **🌐 HTML "salvato con pagina completa"** (un file `.html` + sottocartella di
+  immagini/CSS/JS) — crea una sottocartella in
+  `{DOC_HTML_SRC_FOLDER}/<nome documento>/` con dentro il file `.html` e la sua
+  cartella di risorse. Comparirà un bottone **"📦 Impacchetta"**: premilo una
+  volta per convertirlo in un unico file autosufficiente (immagini in base64,
+  CSS/JS incorporati), salvato in `{DOC_HTML_READY_FOLDER}/` — da lì in poi si
+  apre istantaneamente, senza ripetere l'impacchettamento.
+                """
+            )
+
+        _tipo_doc_teoria = st.radio(
+            "Tipo di documento", ["📝 Markdown", "📄 PDF", "🌐 HTML"], horizontal=True, key="teoria_tipo"
+        )
+
+        if _tipo_doc_teoria == "📝 Markdown":
+            _md_files_teoria = elenca_markdown(DOC_MD_FOLDER)
+            if not _md_files_teoria:
+                st.info(f"Nessun file .md trovato in `{DOC_MD_FOLDER}/`. Aggiungine uno e ricarica la pagina.")
+            else:
+                _scelto_md_teoria = st.selectbox("Documento", _md_files_teoria, key="teoria_md_scelto")
+                with open(os.path.join(DOC_MD_FOLDER, _scelto_md_teoria), encoding='utf-8') as f:
+                    st.markdown(f.read())
+
+        elif _tipo_doc_teoria == "📄 PDF":
+            _pdf_files_teoria = elenca_pdf(DOC_PDF_FOLDER)
+            if not _pdf_files_teoria:
+                st.info(f"Nessun file .pdf trovato in `{DOC_PDF_FOLDER}/`. Aggiungine uno e ricarica la pagina.")
+            else:
+                _scelto_pdf_teoria = st.selectbox("Documento", _pdf_files_teoria, key="teoria_pdf_scelto")
+                st.markdown(
+                    f'<a href="app/static/pdf/{_scelto_pdf_teoria}" target="_blank">'
+                    f'📄 Apri "{_scelto_pdf_teoria}" in una nuova scheda</a>',
+                    unsafe_allow_html=True
+                )
+                st.caption(
+                    "Se il link non si apre correttamente, verifica che `enableStaticServing = true` sia "
+                    "impostato in `.streamlit/config.toml` e che l'app sia stata riavviata dopo averlo aggiunto."
+                )
+
+        else:  # HTML
+            _html_pronti_teoria = elenca_html_pronti(DOC_HTML_READY_FOLDER)
+            _html_sorgenti_teoria = elenca_html_sorgenti(DOC_HTML_SRC_FOLDER)
+            _non_pronti_teoria = {
+                nome: percorso for nome, percorso in _html_sorgenti_teoria.items()
+                if f"{nome}.html" not in _html_pronti_teoria
+            }
+
+            if _non_pronti_teoria:
+                with st.expander(f"⚙️ {len(_non_pronti_teoria)} documento/i da impacchettare", expanded=True):
+                    for _nome_teoria, _percorso_teoria in _non_pronti_teoria.items():
+                        col_pk1, col_pk2 = st.columns([3, 1])
+                        col_pk1.write(f"**{_nome_teoria}**")
+                        if col_pk2.button("📦 Impacchetta", key=f"teoria_pack_{_nome_teoria}"):
+                            try:
+                                _html_finale_teoria = impacchetta_html(_percorso_teoria)
+                                os.makedirs(DOC_HTML_READY_FOLDER, exist_ok=True)
+                                with open(
+                                    os.path.join(DOC_HTML_READY_FOLDER, f"{_nome_teoria}.html"), 'w', encoding='utf-8'
+                                ) as f:
+                                    f.write(_html_finale_teoria)
+                                st.success(f"'{_nome_teoria}' impacchettato con successo.")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Errore durante l'impacchettamento di '{_nome_teoria}': {e}")
+
+            if not _html_pronti_teoria:
+                st.info(
+                    f"Nessun documento HTML pronto. Aggiungine uno in "
+                    f"`{DOC_HTML_SRC_FOLDER}/<nome>/` e impacchettalo con il bottone sopra."
+                )
+            else:
+                _scelto_html_teoria = st.selectbox("Documento", _html_pronti_teoria, key="teoria_html_scelto")
+                st.iframe(
+                    os.path.join(DOC_HTML_READY_FOLDER, _scelto_html_teoria),
+                    height=900, width="stretch"
+                )
 
 
 

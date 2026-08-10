@@ -10,3 +10,4 @@ plotly>=5.0.0
 scipy>=1.9.0       # Per l'interpolazione della superficie 3D (Cella 9)
 # py_vollib rimosso: il Vanna è ora calcolato analiticamente con scipy (già incluso)
 cachetools>=5.0.0  # Per la cache (Sez 8)
+beautifulsoup4>=4.12.0  # Per il tab Teoria: impacchettamento HTML autosufficienti

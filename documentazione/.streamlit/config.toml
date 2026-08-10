@@ -1,0 +1,6 @@
+# add queste righe a ./streamlit/config.toml
+# questo è il percorso nella directory radice dell'app 
+
+
+[server]
+enableStaticServing = true
