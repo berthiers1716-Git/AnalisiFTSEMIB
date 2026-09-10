@@ -957,3 +957,32 @@ def classifica_durata_cicli(df_pivot_full, ciclo_barre, rapporto_min=0.75, rappo
             'Barre': _gap, 'Classificazione': _classe
         })
     return pd.DataFrame(righe)
+
+
+def aggrega_barre_n(df_prezzi, n, colonna_time='time'):
+    """
+    Aggrega un DataFrame OHLC in barre da n barre consecutive, per CONTEGGIO di
+    barre (non per calendario come un resample settimanale/mensile): n=2 -> ogni
+    2 barre giornaliere diventano 1 barra "2D", n=4 -> ogni 4 barre diventano 1
+    barra "4D". Utile per la ciclica: con un ciclo nominale fisso (es. 32 barre),
+    cambiare il timeframe di aggregazione fa scalare automaticamente la finestra
+    temporale coperta (32 barre daily = mensile, 32 barre "2D" = 64gg, 32 barre
+    "4D" = 128gg/semestrale, e cosi' via) senza dover cambiare il parametro.
+
+    L'aggregazione parte dalla prima barra disponibile e procede in avanti;
+    l'ultima barra puo' restare "parziale" (meno di n barre) se il totale non e'
+    multiplo di n - resta comunque inclusa, rappresenta l'aggregato piu' recente
+    disponibile (si aggiornera' quando arriveranno altri giorni).
+
+    Richiede colonne open/high/low/close (+ colonna_time). La data di ciascuna
+    barra aggregata e' quella dell'ULTIMO giorno del gruppo (convenzione: la
+    barra "si chiude" quel giorno).
+    """
+    df = df_prezzi.sort_values(colonna_time).reset_index(drop=True)
+    gruppo = df.index // n
+    agg = df.groupby(gruppo).agg(**{
+        colonna_time: (colonna_time, 'last'),
+        'open': ('open', 'first'), 'high': ('high', 'max'),
+        'low': ('low', 'min'), 'close': ('close', 'last'),
+    }).reset_index(drop=True)
+    return agg

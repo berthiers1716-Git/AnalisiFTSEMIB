@@ -24,7 +24,7 @@ from euronext_module import (
     reconcile_log, update_log_fields, log_totali_giornalieri, ricostruisci_storico_totali,
     aggiungi_nota_diario, elimina_nota_diario, modifica_nota_diario, _bs_price,
     estimate_iv_multi_day_batch, ricostruisci_storico_stats, aggiorna_riga_oggi_stats,
-    third_friday, rileva_pivot_alternati, classifica_durata_cicli
+    third_friday, rileva_pivot_alternati, classifica_durata_cicli, aggrega_barre_n
 )
 from documentazione_module import (
     impacchetta_html, elenca_markdown, elenca_pdf, elenca_html_pronti, elenca_html_sorgenti
@@ -272,6 +272,7 @@ DOC_MD_FOLDER = "documentazione/md"
 DOC_HTML_SRC_FOLDER = "documentazione/html_sorgente"
 DOC_HTML_READY_FOLDER = "documentazione/html_pronto"
 DOC_PDF_FOLDER = "static/pdf"
+CICLI_CONVALIDA_PATH = "dati_locali/cicli_convalida.csv"
 
 if df_raw is not None and spot_price > 0:
     log_totali_giornalieri(df_raw, analysis_date, TOTALI_LOG_PATH, spot=spot_price)
@@ -344,11 +345,11 @@ if df_raw is not None and spot_price > 0:
             dex_metrics      = calculate_dex_metrics(df_selected_expiry_oi, spot_price)
             vex_metrics      = calculate_vex_metrics(df_selected_expiry_oi, spot_price, risk_free_rate, dividend_yield)
 
-    tab_summary, tab_gex, tab_vex_dex, tab_oi_vol, tab_stats, tab_vol_surf, tab_eventi, tab_storico, tab_note, tab_decay, tab_ripart, tab_treno, tab_teoria = st.tabs([
+    tab_summary, tab_gex, tab_vex_dex, tab_oi_vol, tab_stats, tab_vol_surf, tab_eventi, tab_storico, tab_note, tab_decay, tab_ripart, tab_treno, tab_cicli, tab_teoria = st.tabs([
         '📋 Summary', '📊 Gamma (GEX)', '🧩 Vanna & Delta (VEX/DEX)',
         '🎯 Support/Res (OI & Vol)', '📉 Stats', '📈 Vol Surface', '📋 Eventi Volume',
         '📈 Andamento Storico', '📝 Note', '⏳ Decadimento', '⚖️ Ripartizione OI', '🚂 Treno',
-        '📚 Teoria'
+        '🌀 Cicli', '📚 Teoria'
     ])
 
     # ========================= TAB SUMMARY =========================
@@ -1880,6 +1881,303 @@ secondo il metodo di Treno — oscillazione standard e oscillazione inversa (il 
                                 }
                             )
                             st.dataframe(_tab_scostamento_treno.round(2), width="stretch", hide_index=True)
+
+    # ========================= TAB CICLI =========================
+    with tab_cicli:
+        st.header("🌀 Cicli — Rilevazione e Convalida")
+
+        with st.expander("ℹ️ Come funziona", expanded=False):
+            st.markdown(
+                """
+**Idea di fondo.** Lo stesso principio del tab Treno (un estremo si conferma
+quando resta imbattuto per ~1/4 della durata del ciclo), ma pensato per essere
+seguito su più timeframe con un ciclo nominale **fisso a 32 barre** in
+qualunque vista. Cambiando il timeframe di aggregazione cambia
+automaticamente la finestra temporale coperta — 32 barre Daily ≈ mensile, 32
+barre "2D" ≈ 64gg, 32 barre "4D" ≈ 128gg (semestrale) — senza dover
+ritoccare il parametro (a differenza del Weekly/Monthly di Treno, qui
+l'aggregazione è per **conteggio di barre di borsa**, non per calendario).
+
+**SMA 20**: media mobile semplice a 20 periodi sul Close, calcolata sulle
+stesse barre in vista — un pivot che tocca/attraversa la SMA20 è
+generalmente più affidabile di uno che ne resta lontano.
+
+**Cicli diritti e inversi**: la ricerca alterna massimo e minimo — i minimi
+confermati sono le partenze dei cicli **diritti** (standard), i massimi
+confermati sono le partenze dei cicli **inversi**.
+
+**⚠️ Le tabelle qui sotto mostrano il rilievo matematico/statistico**, un
+punto di partenza, non un verdetto: lingue (elongazioni) e troncamenti fanno
+parte della realtà dei cicli e richiedono il tuo giudizio. Ogni riga è
+**convalidabile a mano** (Confermato / Scartato / Dubbio + nota libera), e la
+valutazione resta salvata anche cambiando filtro periodo.
+                """
+            )
+
+        _percorso_prezzi_cicli = st.text_input(
+            "Percorso storico prezzi (OHLC)", value=percorso_prezzi, key="percorso_prezzi_cicli"
+        )
+        if not os.path.exists(_percorso_prezzi_cicli):
+            st.warning(f"File non trovato: `{_percorso_prezzi_cicli}`.")
+        else:
+            _df_prezzi_cicli = pd.read_csv(_percorso_prezzi_cicli, parse_dates=['time'])
+            _df_prezzi_cicli = _df_prezzi_cicli.dropna(subset=['open', 'high', 'low', 'close'])
+            _df_prezzi_cicli = _df_prezzi_cicli.sort_values('time').drop_duplicates(subset='time').reset_index(drop=True)
+
+            if len(_df_prezzi_cicli) < 2:
+                st.warning("Servono almeno due giorni di dati OHLC per mostrare un grafico.")
+            else:
+                st.caption(
+                    "💡 Lo zoom (+) del grafico non riadatta automaticamente l'asse verticale: per "
+                    "restringere il periodo mostrato conviene usare il filtro qui sotto invece dello zoom."
+                )
+                col_fc1, col_fc2 = st.columns([1, 1.4])
+                with col_fc1:
+                    _modalita_filtro_cicli = st.radio(
+                        "Periodo da visualizzare", options=["Tutto", "Ultimi N giorni", "Da una data"],
+                        horizontal=True, key="cicli_filtro_modalita"
+                    )
+                _df_prezzi_cicli_filtrato = _df_prezzi_cicli
+                if _modalita_filtro_cicli == "Ultimi N giorni":
+                    with col_fc2:
+                        _n_giorni_cicli = st.number_input(
+                            "Quanti giorni di calendario (dall'ultimo disponibile)",
+                            min_value=1, value=180, step=1, key="cicli_n_giorni"
+                        )
+                    _cutoff_cicli = _df_prezzi_cicli['time'].max() - pd.Timedelta(days=int(_n_giorni_cicli))
+                    _df_prezzi_cicli_filtrato = _df_prezzi_cicli[_df_prezzi_cicli['time'] >= _cutoff_cicli]
+                elif _modalita_filtro_cicli == "Da una data":
+                    with col_fc2:
+                        _data_da_cicli = st.date_input(
+                            "Mostra a partire da",
+                            value=_df_prezzi_cicli['time'].min().date(),
+                            min_value=_df_prezzi_cicli['time'].min().date(),
+                            max_value=_df_prezzi_cicli['time'].max().date(),
+                            key="cicli_data_da"
+                        )
+                    _df_prezzi_cicli_filtrato = _df_prezzi_cicli[_df_prezzi_cicli['time'].dt.date >= _data_da_cicli]
+
+                if len(_df_prezzi_cicli_filtrato) < 2:
+                    st.info("Meno di due giorni nel periodo selezionato: allarga il filtro per vedere un grafico.")
+                else:
+                    col_tf1, col_tf2 = st.columns(2)
+                    with col_tf1:
+                        _tf_cicli = st.radio(
+                            "Timeframe (barre per conteggio)", ["Daily", "2D", "4D"], horizontal=True, key="cicli_timeframe"
+                        )
+                    with col_tf2:
+                        _tipo_grafico_cicli = st.radio(
+                            "Tipo grafico", ["Candele", "Barre"], horizontal=True, key="cicli_tipo_grafico"
+                        )
+
+                    col_cy1, col_cy2, col_cy3 = st.columns(3)
+                    with col_cy1:
+                        _ciclo_barre_cicli = st.number_input(
+                            "Lunghezza ciclo (barre del timeframe scelto)",
+                            min_value=4, value=32, step=1, key="cicli_ciclo_barre"
+                        )
+                    with col_cy2:
+                        _mostra_ciclo_inverso_cicli = st.checkbox(
+                            "Cicli inversi (da massimi)", value=True, key="cicli_mostra_inverso"
+                        )
+                    with col_cy3:
+                        _mostra_ciclo_standard_cicli = st.checkbox(
+                            "Cicli diritti (da minimi)", value=True, key="cicli_mostra_standard"
+                        )
+                    _finestra_conferma_cicli = max(1, round(_ciclo_barre_cicli / 4))
+                    st.caption(
+                        f"Finestra di conferma: **{_finestra_conferma_cicli} barre** senza nuovo estremo "
+                        f"(¼ di {_ciclo_barre_cicli:.0f})."
+                    )
+
+                    # Le barre nel timeframe scelto e la rilevazione pivot si calcolano sull'INTERA serie
+                    # storica (non solo sul periodo filtrato), per evitare artefatti ai bordi del filtro -
+                    # stessa logica gia' validata nel tab Treno.
+                    _df_completo_cicli = _df_prezzi_cicli.sort_values('time').reset_index(drop=True)
+                    if _tf_cicli == "2D":
+                        _df_barre_completo_cicli = aggrega_barre_n(_df_completo_cicli, 2)
+                    elif _tf_cicli == "4D":
+                        _df_barre_completo_cicli = aggrega_barre_n(_df_completo_cicli, 4)
+                    else:
+                        _df_barre_completo_cicli = _df_completo_cicli.copy()
+                    _df_barre_completo_cicli['sma20'] = _df_barre_completo_cicli['close'].rolling(20).mean()
+
+                    _data_min_cicli = _df_prezzi_cicli_filtrato['time'].min().date()
+                    _data_max_cicli = _df_prezzi_cicli_filtrato['time'].max().date()
+                    _df_barre_vista_cicli = _df_barre_completo_cicli[
+                        (_df_barre_completo_cicli['time'].dt.date >= _data_min_cicli) &
+                        (_df_barre_completo_cicli['time'].dt.date <= _data_max_cicli)
+                    ]
+
+                    _pivot_alti_full_cicli, _pivot_bassi_full_cicli = rileva_pivot_alternati(
+                        _df_barre_completo_cicli, _finestra_conferma_cicli
+                    )
+                    _pivot_alti_cicli = pd.DataFrame(columns=['idx', 'time', 'valore'])
+                    _pivot_bassi_cicli = pd.DataFrame(columns=['idx', 'time', 'valore'])
+                    if _mostra_ciclo_inverso_cicli and not _pivot_alti_full_cicli.empty:
+                        _pivot_alti_cicli = _pivot_alti_full_cicli[
+                            (pd.to_datetime(_pivot_alti_full_cicli['time']).dt.date >= _data_min_cicli) &
+                            (pd.to_datetime(_pivot_alti_full_cicli['time']).dt.date <= _data_max_cicli)
+                        ]
+                    if _mostra_ciclo_standard_cicli and not _pivot_bassi_full_cicli.empty:
+                        _pivot_bassi_cicli = _pivot_bassi_full_cicli[
+                            (pd.to_datetime(_pivot_bassi_full_cicli['time']).dt.date >= _data_min_cicli) &
+                            (pd.to_datetime(_pivot_bassi_full_cicli['time']).dt.date <= _data_max_cicli)
+                        ]
+
+                    _fig_cicli = go.Figure()
+                    if _tipo_grafico_cicli == "Candele":
+                        _fig_cicli.add_trace(go.Candlestick(
+                            x=_df_barre_vista_cicli['time'], open=_df_barre_vista_cicli['open'],
+                            high=_df_barre_vista_cicli['high'], low=_df_barre_vista_cicli['low'],
+                            close=_df_barre_vista_cicli['close'], name='FTSEMIB',
+                            increasing_line_color='#34d399', decreasing_line_color='#f87171'
+                        ))
+                    else:
+                        _fig_cicli.add_trace(go.Ohlc(
+                            x=_df_barre_vista_cicli['time'], open=_df_barre_vista_cicli['open'],
+                            high=_df_barre_vista_cicli['high'], low=_df_barre_vista_cicli['low'],
+                            close=_df_barre_vista_cicli['close'], name='FTSEMIB',
+                            increasing_line_color='#34d399', decreasing_line_color='#f87171'
+                        ))
+                    _fig_cicli.add_trace(go.Scatter(
+                        x=_df_barre_vista_cicli['time'], y=_df_barre_vista_cicli['sma20'],
+                        mode='lines', name='SMA 20', line=dict(color='#facc15', width=1.5),
+                        hovertemplate='%{x}<br>SMA20: %{y:,.2f}<extra></extra>'
+                    ))
+                    if not _pivot_alti_cicli.empty:
+                        _fig_cicli.add_trace(go.Scatter(
+                            x=_pivot_alti_cicli['time'], y=_pivot_alti_cicli['valore'],
+                            mode='markers', name='Ciclo inverso (da massimo)',
+                            marker=dict(color='#c084fc', size=13, symbol='triangle-down'),
+                            hovertemplate='%{x}<br>Massimo confermato: %{y:,.2f}<extra></extra>'
+                        ))
+                    if not _pivot_bassi_cicli.empty:
+                        _fig_cicli.add_trace(go.Scatter(
+                            x=_pivot_bassi_cicli['time'], y=_pivot_bassi_cicli['valore'],
+                            mode='markers', name='Ciclo diritto (da minimo)',
+                            marker=dict(color='#38bdf8', size=13, symbol='triangle-up'),
+                            hovertemplate='%{x}<br>Minimo confermato: %{y:,.2f}<extra></extra>'
+                        ))
+                    _fig_cicli.update_layout(
+                        template='plotly_dark', height=650, margin=dict(l=10, r=10, t=30, b=10),
+                        xaxis_rangeslider_visible=False, hovermode='x unified',
+                        legend=dict(orientation='h', yanchor='bottom', y=1.02)
+                    )
+                    st.plotly_chart(_fig_cicli, width="stretch", key="cicli_chart")
+                    st.caption(
+                        f"{len(_df_barre_vista_cicli)} barre {_tf_cicli} mostrate, periodo "
+                        f"{_data_min_cicli.strftime('%d/%m/%Y')} — {_data_max_cicli.strftime('%d/%m/%Y')}."
+                    )
+
+                    # ---- Tabelle di convalida (rilievo matematico + giudizio dell'analista) ----
+                    _CONVALIDA_COLS_CICLI = [
+                        'tipo', 'timeframe', 'ciclo_barre', 'da', 'a', 'barre', 'classificazione', 'convalida', 'nota'
+                    ]
+                    if os.path.exists(CICLI_CONVALIDA_PATH):
+                        _df_convalida_cicli = pd.read_csv(CICLI_CONVALIDA_PATH, parse_dates=['da', 'a'])
+                        _df_convalida_cicli['da'] = _df_convalida_cicli['da'].dt.date
+                        _df_convalida_cicli['a'] = _df_convalida_cicli['a'].dt.date
+                    else:
+                        _df_convalida_cicli = pd.DataFrame(columns=_CONVALIDA_COLS_CICLI)
+
+                    def _tabella_con_convalida_cicli(df_pivot_full, tipo_label):
+                        _classificato = classifica_durata_cicli(
+                            df_pivot_full, _ciclo_barre_cicli, data_min=_data_min_cicli, data_max=_data_max_cicli
+                        )
+                        if _classificato.empty:
+                            return _classificato
+                        if _df_convalida_cicli.empty:
+                            _classificato['Convalida'] = ''
+                            _classificato['Nota'] = ''
+                            return _classificato
+                        _override = _df_convalida_cicli[
+                            (_df_convalida_cicli['tipo'] == tipo_label) &
+                            (_df_convalida_cicli['timeframe'] == _tf_cicli) &
+                            (_df_convalida_cicli['ciclo_barre'] == _ciclo_barre_cicli)
+                        ][['a', 'convalida', 'nota']].rename(columns={'convalida': 'Convalida', 'nota': 'Nota'})
+                        _unito = _classificato.merge(_override, left_on='A', right_on='a', how='left').drop(columns=['a'])
+                        _unito['Convalida'] = _unito['Convalida'].fillna('')
+                        _unito['Nota'] = _unito['Nota'].fillna('')
+                        return _unito
+
+                    _config_convalida_cicli = {
+                        'Convalida': st.column_config.SelectboxColumn(
+                            "Convalida", options=["", "✅ Confermato", "❌ Scartato", "❓ Dubbio"]
+                        ),
+                        'Nota': st.column_config.TextColumn("Nota"),
+                    }
+                    _colonne_disabilitate_cicli = ['Da', 'A', 'Barre', 'Classificazione']
+
+                    _edit_alti_cicli = pd.DataFrame()
+                    with st.expander("📏 Cicli inversi rilevati (da massimi) — convalida", expanded=True):
+                        if not _mostra_ciclo_inverso_cicli:
+                            st.caption("Attiva 'Cicli inversi (da massimi)' sopra per vedere questa tabella.")
+                        else:
+                            _tab_alti_cicli = _tabella_con_convalida_cicli(_pivot_alti_full_cicli, 'inverso')
+                            if _tab_alti_cicli.empty:
+                                st.caption("Nessun ciclo completo nel periodo mostrato.")
+                            else:
+                                _edit_alti_cicli = st.data_editor(
+                                    _tab_alti_cicli, width="stretch", hide_index=True, key="cicli_edit_alti",
+                                    disabled=_colonne_disabilitate_cicli, column_config=_config_convalida_cicli
+                                )
+
+                    _edit_bassi_cicli = pd.DataFrame()
+                    with st.expander("📏 Cicli diritti rilevati (da minimi) — convalida", expanded=True):
+                        if not _mostra_ciclo_standard_cicli:
+                            st.caption("Attiva 'Cicli diritti (da minimi)' sopra per vedere questa tabella.")
+                        else:
+                            _tab_bassi_cicli = _tabella_con_convalida_cicli(_pivot_bassi_full_cicli, 'standard')
+                            if _tab_bassi_cicli.empty:
+                                st.caption("Nessun ciclo completo nel periodo mostrato.")
+                            else:
+                                _edit_bassi_cicli = st.data_editor(
+                                    _tab_bassi_cicli, width="stretch", hide_index=True, key="cicli_edit_bassi",
+                                    disabled=_colonne_disabilitate_cicli, column_config=_config_convalida_cicli
+                                )
+
+                    if st.button("💾 Salva convalida cicli", key="cicli_salva_convalida"):
+                        _righe_visibili_cicli = []
+                        for _, _r in _edit_alti_cicli.iterrows():
+                            _righe_visibili_cicli.append({
+                                'tipo': 'inverso', 'timeframe': _tf_cicli, 'ciclo_barre': _ciclo_barre_cicli,
+                                'da': _r['Da'], 'a': _r['A'], 'barre': _r['Barre'],
+                                'classificazione': _r['Classificazione'], 'convalida': _r['Convalida'], 'nota': _r['Nota']
+                            })
+                        for _, _r in _edit_bassi_cicli.iterrows():
+                            _righe_visibili_cicli.append({
+                                'tipo': 'standard', 'timeframe': _tf_cicli, 'ciclo_barre': _ciclo_barre_cicli,
+                                'da': _r['Da'], 'a': _r['A'], 'barre': _r['Barre'],
+                                'classificazione': _r['Classificazione'], 'convalida': _r['Convalida'], 'nota': _r['Nota']
+                            })
+                        _df_visibili_cicli = pd.DataFrame(_righe_visibili_cicli, columns=_CONVALIDA_COLS_CICLI)
+                        # Le chiavi si calcolano su TUTTE le righe visibili (anche quelle senza convalida/nota):
+                        # cosi' se l'utente svuota un campo gia' salvato in precedenza, la cancellazione viene
+                        # rispettata invece di lasciare in giro il vecchio valore "orfano".
+                        _chiavi_visibili_cicli = set(zip(
+                            _df_visibili_cicli['tipo'], _df_visibili_cicli['timeframe'],
+                            _df_visibili_cicli['ciclo_barre'], _df_visibili_cicli['a']
+                        ))
+                        if not _df_convalida_cicli.empty:
+                            _rimanenti_cicli = _df_convalida_cicli[
+                                ~_df_convalida_cicli.apply(
+                                    lambda r: (r['tipo'], r['timeframe'], r['ciclo_barre'], r['a']) in _chiavi_visibili_cicli,
+                                    axis=1
+                                )
+                            ]
+                        else:
+                            _rimanenti_cicli = _df_convalida_cicli
+                        _df_da_salvare_cicli = _df_visibili_cicli[
+                            (_df_visibili_cicli['convalida'] != '') | (_df_visibili_cicli['nota'] != '')
+                        ]
+                        _df_finale_cicli = pd.concat([_rimanenti_cicli, _df_da_salvare_cicli], ignore_index=True)
+                        _df_finale_cicli = _df_finale_cicli.sort_values(
+                            ['tipo', 'timeframe', 'ciclo_barre', 'a']
+                        ).reset_index(drop=True)
+                        os.makedirs(os.path.dirname(CICLI_CONVALIDA_PATH), exist_ok=True)
+                        _df_finale_cicli.to_csv(CICLI_CONVALIDA_PATH, index=False)
+                        st.success(f"Salvate {len(_df_finale_cicli)} righe di convalida cicli in totale.")
 
     # ========================= TAB TEORIA =========================
     with tab_teoria:
