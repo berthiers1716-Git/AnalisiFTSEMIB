@@ -350,7 +350,7 @@ if df_raw is not None and spot_price > 0:
 # -----------------------------------------------------------------------------
 # CORPO PRINCIPALE
 # -----------------------------------------------------------------------------
-if df_raw is not None:
+if df_raw is not None and spot_price > 0:
 
     unique_expirations = sorted(df_raw['Expiration Date'].dropna().unique())
     _WEEKDAYS_EN = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
@@ -378,58 +378,30 @@ if df_raw is not None:
         return enrich_with_greeks(df_expiry_raw, spot, analysis_date, r, q, mult)
 
     df_selected_raw = df_raw[df_raw['Expiration Date'] == selected_expiry_date].copy()
-
-    _spot_disponibile = spot_price > 0
-    if _spot_disponibile:
-        df_selected_expiry, n_discarded = _enrich(
-            df_selected_raw, spot_price, analysis_date, risk_free_rate, dividend_yield, contract_multiplier
-        )
-        if n_discarded > 0:
-            st.warning(
-                f"{n_discarded}/{len(df_selected_expiry)} righe di questa scadenza avevano un Settle "
-                f"non invertibile (fuori limiti no-arbitraggio) e sono state escluse da IV/Delta/Gamma/Vanna "
-                f"(restano incluse nei calcoli basati solo su OI/Volume, come Max Pain e i Wall)."
-            )
-        df_selected_expiry_oi = df_selected_expiry[df_selected_expiry['OI'] > 0].copy()
-    else:
-        # Niente spot: niente Black-Scholes possibile (servirebbe dividere per uno spot
-        # inesistente). Si resta sui dati grezzi - la tabella e i tab che non dipendono
-        # dallo spot restano comunque disponibili (vedi tab Dati e messaggi sotto).
+    df_selected_expiry, n_discarded = _enrich(
+        df_selected_raw, spot_price, analysis_date, risk_free_rate, dividend_yield, contract_multiplier
+    )
+    if n_discarded > 0:
         st.warning(
-            "💤 Nessuno Spot FTSEMIB impostato in sidebar: le analisi che derivano Greche/GEX/VEX/DEX/"
-            "Max Pain/Vol Surface da Black-Scholes non possono essere calcolate (richiedono lo spot). "
-            "Puoi comunque consultare la tabella dati grezzi (tab '🗂️ Dati'), Eventi Volume, Andamento "
-            "Storico, Note, Treno, Cicli e Teoria."
+            f"{n_discarded}/{len(df_selected_expiry)} righe di questa scadenza avevano un Settle "
+            f"non invertibile (fuori limiti no-arbitraggio) e sono state escluse da IV/Delta/Gamma/Vanna "
+            f"(restano incluse nei calcoli basati solo su OI/Volume, come Max Pain e i Wall)."
         )
-        df_selected_expiry = df_selected_raw.copy()
-        n_discarded = 0
-        df_selected_expiry_oi = df_selected_raw.iloc[0:0].copy()  # vuoto ma con le stesse colonne
 
+    df_selected_expiry_oi = df_selected_expiry[df_selected_expiry['OI'] > 0].copy()
     # v1.2.0: niente più st.stop() qui. L'assenza di OI (tipico intraday, prima del
     # calcolo di fine giornata) non deve bloccare TUTTA l'app: i tab che non dipendono
     # dall'OI (Eventi Volume, Andamento Storico, Note, Vol Surface, Ripartizione OI)
     # restano utilizzabili. Solo i tab che richiedono davvero l'OI mostrano un avviso
     # locale, invece del vecchio blocco totale.
-    # Se manca anche/solo lo spot, si riusa lo stesso meccanismo (vedi _messaggio_dati_insufficienti
-    # sotto): i tab non devono sapere QUALE dei due manca, solo che l'analisi non e' calcolabile.
-    _oi_disponibile = _spot_disponibile and not df_selected_expiry_oi.empty
-    if _spot_disponibile and not _oi_disponibile:
+    _oi_disponibile = not df_selected_expiry_oi.empty
+    if not _oi_disponibile:
         st.warning(
             "⏳ Nessun Open Interest per questa scadenza (probabile intraday, prima del calcolo di "
             "fine giornata). Le tab basate su OI (Summary, Gamma/GEX, Vanna & Delta, Support/Res, "
             "Stats) mostreranno un avviso al loro interno. Eventi Volume, Andamento Storico, Note, "
             "Vol Surface e Ripartizione OI restano comunque disponibili."
         )
-
-    def _messaggio_dati_insufficienti():
-        """Messaggio mostrato al posto delle metriche quando _oi_disponibile e' False -
-        distingue la causa (spot mancante vs OI mancante) senza che ogni tab debba saperlo."""
-        if not _spot_disponibile:
-            return ("💤 Serve lo Spot FTSEMIB (imposta lo nella sidebar) per calcolare questa analisi: "
-                    "richiede Greche/GEX stimate via Black-Scholes, che a loro volta richiedono lo spot.")
-        return ("⏳ Open Interest non ancora disponibile per questa scadenza (probabile intraday): questa "
-                "sezione richiede l'OI per calcolare le metriche. Riprova più tardi o scegli una scadenza "
-                "con OI disponibile.")
 
     if _oi_disponibile:
         with st.spinner("Calcolo metriche per la scadenza..."):
@@ -443,31 +415,14 @@ if df_raw is not None:
             dex_metrics      = calculate_dex_metrics(df_selected_expiry_oi, spot_price)
             vex_metrics      = calculate_vex_metrics(df_selected_expiry_oi, spot_price, risk_free_rate, dividend_yield)
 
-    tab_dati, tab_summary, tab_gex, tab_vex_dex, tab_oi_vol, tab_stats, tab_vol_surf, tab_eventi, tab_storico, tab_note, tab_decay, tab_ripart, tab_treno, tab_cicli, tab_teoria = st.tabs([
-        '🗂️ Dati', '📋 Summary', '📊 Gamma (GEX)', '🧩 Vanna & Delta (VEX/DEX)',
+    tab_summary, tab_gex, tab_vex_dex, tab_oi_vol, tab_stats, tab_vol_surf, tab_eventi, tab_storico, tab_note, tab_decay, tab_ripart, tab_treno, tab_cicli, tab_teoria = st.tabs([
+        '📋 Summary', '📊 Gamma (GEX)', '🧩 Vanna & Delta (VEX/DEX)',
         '🎯 Support/Res (OI & Vol)', '📉 Stats', '📈 Vol Surface', '📋 Eventi Volume',
         '📈 Andamento Storico', '📝 Note', '⏳ Decadimento', '⚖️ Ripartizione OI', '🚂 Treno',
         '🌀 Cicli', '📚 Teoria'
     ])
 
     # ========================= TAB SUMMARY =========================
-    with tab_dati:
-        st.header(f"Dati grezzi opzioni per {selected_expiry_label}")
-        st.caption(
-            "Sempre disponibile, indipendentemente da Spot e Open Interest: utile per controllare "
-            "cosa è stato effettivamente caricato prima ancora di impostare lo spot, o quando "
-            "un'analisi non è calcolabile (vedi eventuali avvisi sopra)."
-        )
-        _colonne_disponibili = [c for c in
-                                 ['Strike', 'Type', 'Settle', 'Vol', 'OI', 'Delta', 'Gamma', 'IV', 'Moneyness']
-                                 if c in df_selected_expiry.columns]
-        _tabella_grezza = df_selected_expiry[_colonne_disponibili].copy().sort_values('Strike').reset_index(drop=True)
-        _formati = {'Settle': '{:.2f}', 'Delta': '{:.3f}', 'Gamma': '{:.5f}', 'IV': '{:.2%}', 'Moneyness': '{:.3f}'}
-        _formati_applicabili = {k: v for k, v in _formati.items() if k in _tabella_grezza.columns}
-        st.dataframe(_tabella_grezza.style.format(_formati_applicabili), width="stretch", hide_index=True)
-        if not _spot_disponibile:
-            st.caption("Colonne Delta/Gamma/IV/Moneyness non mostrate: richiedono lo Spot per essere calcolate.")
-
     with tab_summary:
         st.header(f"Executive Summary per {selected_expiry_label}")
 
@@ -490,7 +445,7 @@ if df_raw is not None:
             )
 
         if not _oi_disponibile:
-            st.info(_messaggio_dati_insufficienti())
+            st.info("⏳ Open Interest non ancora disponibile per questa scadenza (probabile intraday): questa sezione richiede l'OI per calcolare le metriche. Riprova più tardi o scegli una scadenza con OI disponibile.")
         else:
             col1, col2, col3, col4, col5, col6 = st.columns(6)
             col1.metric("Spot Price", f"{spot_price:.2f}")
@@ -598,7 +553,7 @@ if df_raw is not None:
 
         col1, col2, col3 = st.columns(3)
         if not _oi_disponibile:
-            st.info(_messaggio_dati_insufficienti())
+            st.info("⏳ Open Interest non ancora disponibile per questa scadenza (probabile intraday): questa sezione richiede l'OI per calcolare le metriche. Riprova più tardi o scegli una scadenza con OI disponibile.")
         else:
             col1.metric("Net GEX", f"€{gex_metrics['total_net_gex'] / 1_000_000:.2f} M")
             col2.metric("Gamma Flip (γ=0)", f"{gex_metrics['gamma_switch_point']:.2f}" if gex_metrics['gamma_switch_point'] is not None else "N/A")
@@ -632,7 +587,7 @@ if df_raw is not None:
             )
 
         if not _oi_disponibile:
-            st.info(_messaggio_dati_insufficienti())
+            st.info("⏳ Open Interest non ancora disponibile per questa scadenza (probabile intraday): questa sezione richiede l'OI per calcolare le metriche. Riprova più tardi o scegli una scadenza con OI disponibile.")
         else:
             col1, col2, col3, col4 = st.columns(4)
             col1.metric("Total Net DEX", f"€{dex_metrics['total_net_dex'] / 1_000_000:.2f} M")
@@ -676,7 +631,7 @@ if df_raw is not None:
             )
 
         if not _oi_disponibile:
-            st.info(_messaggio_dati_insufficienti())
+            st.info("⏳ Open Interest non ancora disponibile per questa scadenza (probabile intraday): questa sezione richiede l'OI per calcolare le metriche. Riprova più tardi o scegli una scadenza con OI disponibile.")
         else:
             col1, col2 = st.columns(2)
             col1.metric("🛡️ Put Wall", f"{oi_metrics['put_wall_strike']:.0f}" if oi_metrics['put_wall_strike'] else "N/A", help=f"OI: {oi_metrics['put_wall_oi']:,.0f}")
@@ -725,7 +680,7 @@ if df_raw is not None:
 
         col1, col2, col3 = st.columns(3)
         if not _oi_disponibile:
-            st.info(_messaggio_dati_insufficienti())
+            st.info("⏳ Open Interest non ancora disponibile per questa scadenza (probabile intraday): questa sezione richiede l'OI per calcolare le metriche. Riprova più tardi o scegli una scadenza con OI disponibile.")
         else:
             col1.metric("📍 Max Pain Strike", f"{max_pain_strike:.0f}" if max_pain_strike else "N/A")
             col2.metric("P/C Ratio (OI)", f"{pc_ratios['pc_oi_ratio']:.3f}" if pd.notna(pc_ratios['pc_oi_ratio']) else "N/A")
@@ -950,9 +905,7 @@ e questa approssimazione riguarda solo i giorni recuperati in blocco a posterior
             "Calcolata su richiesta: deriva la IV per TUTTE le scadenze presenti nel testo "
             "incollato (può richiedere qualche secondo in più della singola scadenza)."
         )
-        if not _spot_disponibile:
-            st.info(_messaggio_dati_insufficienti())
-        elif st.button("Calcola superficie 3D"):
+        if st.button("Calcola superficie 3D"):
             with st.spinner("Derivazione IV su tutte le scadenze e interpolazione..."):
                 df_all_enriched, n_disc_all = enrich_with_greeks(
                     df_raw, spot_price, analysis_date, risk_free_rate, dividend_yield, contract_multiplier
@@ -1450,146 +1403,143 @@ sullo spot storico.
                 """
             )
 
-        if not _spot_disponibile:
-            st.info(_messaggio_dati_insufficienti())
+        _strikes_disponibili = sorted(df_selected_expiry['Strike'].unique())
+        if not _strikes_disponibili:
+            st.warning("Nessuno strike disponibile per questa scadenza.")
         else:
-            _strikes_disponibili = sorted(df_selected_expiry['Strike'].unique())
-            if not _strikes_disponibili:
-                st.warning("Nessuno strike disponibile per questa scadenza.")
-            else:
-                # Stima IV robusta per TUTTI gli strike/tipo in un solo passaggio sui file
-                # storici (piu' efficiente che richiamarla strike per strike).
-                _iv_oggi_map = {}
-                for _k in _strikes_disponibili:
-                    for _t in ['Call', 'Put']:
-                        _row = df_selected_expiry[(df_selected_expiry['Strike'] == _k) & (df_selected_expiry['Type'] == _t)]
-                        _iv_oggi_map[(_k, _t)] = _row['IV'].iloc[0] if not _row.empty else None
+            # Stima IV robusta per TUTTI gli strike/tipo in un solo passaggio sui file
+            # storici (piu' efficiente che richiamarla strike per strike).
+            _iv_oggi_map = {}
+            for _k in _strikes_disponibili:
+                for _t in ['Call', 'Put']:
+                    _row = df_selected_expiry[(df_selected_expiry['Strike'] == _k) & (df_selected_expiry['Type'] == _t)]
+                    _iv_oggi_map[(_k, _t)] = _row['IV'].iloc[0] if not _row.empty else None
 
-                _tabella_stime = estimate_iv_multi_day_batch(
-                    oggi_date=analysis_date.date(), iv_oggi_map=_iv_oggi_map,
-                    dati_folder=DATI_FOLDER_DEFAULT, storico_totali_path=TOTALI_LOG_PATH,
-                    expiration_date=selected_expiry_date, strikes=_strikes_disponibili,
-                    risk_free_rate=risk_free_rate, dividend_yield=dividend_yield,
-                    index_prices_path=percorso_prezzi, n_giorni=5, min_validi=3
+            _tabella_stime = estimate_iv_multi_day_batch(
+                oggi_date=analysis_date.date(), iv_oggi_map=_iv_oggi_map,
+                dati_folder=DATI_FOLDER_DEFAULT, storico_totali_path=TOTALI_LOG_PATH,
+                expiration_date=selected_expiry_date, strikes=_strikes_disponibili,
+                risk_free_rate=risk_free_rate, dividend_yield=dividend_yield,
+                index_prices_path=percorso_prezzi, n_giorni=5, min_validi=3
+            )
+
+            def _iv_finale_e_fonte(strike, tipo):
+                _stima = _tabella_stime[(strike, tipo)]
+                _iv_oggi = _iv_oggi_map[(strike, tipo)]
+                if _stima['iv_mediana'] is not None:
+                    return _stima['iv_mediana'], "mediana su più giorni", _stima
+                if _iv_oggi is not None and not pd.isna(_iv_oggi) and _iv_oggi > 0:
+                    return float(_iv_oggi), "solo oggi (dati storici insufficienti)", _stima
+                return None, "non disponibile", _stima
+
+            with st.expander("📋 Colpo d'occhio: stima IV per tutti gli strike di questa scadenza", expanded=False):
+                _righe_riepilogo = []
+                for _k in _strikes_disponibili:
+                    _iv_c, _fonte_c, _stima_c = _iv_finale_e_fonte(_k, 'Call')
+                    _iv_p, _fonte_p, _stima_p = _iv_finale_e_fonte(_k, 'Put')
+                    _righe_riepilogo.append({
+                        'Strike': _k,
+                        'IV Call': f"{_iv_c:.2%}" if _iv_c is not None else "N/A",
+                        'Fonte Call': _fonte_c,
+                        'Giorni validi Call': f"{_stima_c['n_validi']}/{_stima_c['n_esaminati']}",
+                        'IV Put': f"{_iv_p:.2%}" if _iv_p is not None else "N/A",
+                        'Fonte Put': _fonte_p,
+                        'Giorni validi Put': f"{_stima_p['n_validi']}/{_stima_p['n_esaminati']}",
+                    })
+                st.dataframe(pd.DataFrame(_righe_riepilogo), width="stretch", hide_index=True)
+                st.caption(
+                    "'Giorni validi' = quante IV utilizzabili trovate sui giorni esaminati (max 5, oggi incluso). "
+                    "Sotto 3 giorni validi la stima passa alla sola IV di oggi, se disponibile."
                 )
 
-                def _iv_finale_e_fonte(strike, tipo):
-                    _stima = _tabella_stime[(strike, tipo)]
-                    _iv_oggi = _iv_oggi_map[(strike, tipo)]
-                    if _stima['iv_mediana'] is not None:
-                        return _stima['iv_mediana'], "mediana su più giorni", _stima
-                    if _iv_oggi is not None and not pd.isna(_iv_oggi) and _iv_oggi > 0:
-                        return float(_iv_oggi), "solo oggi (dati storici insufficienti)", _stima
-                    return None, "non disponibile", _stima
+            _idx_atm_default = min(
+                range(len(_strikes_disponibili)),
+                key=lambda i: abs(_strikes_disponibili[i] - spot_price)
+            )
+            _strike_scelto = st.selectbox(
+                "Strike da analizzare nel grafico (default: più vicino allo spot)",
+                options=_strikes_disponibili, index=_idx_atm_default,
+                format_func=lambda k: f"{k:,.0f}", key="decay_strike_select"
+            )
 
-                with st.expander("📋 Colpo d'occhio: stima IV per tutti gli strike di questa scadenza", expanded=False):
-                    _righe_riepilogo = []
-                    for _k in _strikes_disponibili:
-                        _iv_c, _fonte_c, _stima_c = _iv_finale_e_fonte(_k, 'Call')
-                        _iv_p, _fonte_p, _stima_p = _iv_finale_e_fonte(_k, 'Put')
-                        _righe_riepilogo.append({
-                            'Strike': _k,
-                            'IV Call': f"{_iv_c:.2%}" if _iv_c is not None else "N/A",
-                            'Fonte Call': _fonte_c,
-                            'Giorni validi Call': f"{_stima_c['n_validi']}/{_stima_c['n_esaminati']}",
-                            'IV Put': f"{_iv_p:.2%}" if _iv_p is not None else "N/A",
-                            'Fonte Put': _fonte_p,
-                            'Giorni validi Put': f"{_stima_p['n_validi']}/{_stima_p['n_esaminati']}",
-                        })
-                    st.dataframe(pd.DataFrame(_righe_riepilogo), width="stretch", hide_index=True)
+            _dte_max = int(df_selected_expiry.loc[df_selected_expiry['Strike'] == _strike_scelto, 'DTE_Days'].iloc[0])
+
+            if _dte_max <= 0:
+                st.info("Questa scadenza è già a 0 giorni residui (o scaduta): nessuna curva di decadimento da mostrare.")
+            else:
+                _iv_call, _fonte_call, _stima_call = _iv_finale_e_fonte(_strike_scelto, 'Call')
+                _iv_put, _fonte_put, _stima_put = _iv_finale_e_fonte(_strike_scelto, 'Put')
+
+                if _iv_call is None and _iv_put is None:
+                    st.warning(
+                        "IV non disponibile per questo strike né oggi né nei giorni precedenti in `dati/`: "
+                        "impossibile calcolare il decadimento. Prova un altro strike."
+                    )
+                else:
+                    col_d1, col_d2, col_d3 = st.columns(3)
+                    col_d1.metric("Strike", f"{_strike_scelto:,.0f}")
+                    col_d2.metric("IV Call usata", f"{_iv_call:.2%}" if _iv_call else "N/A", help=_fonte_call)
+                    col_d3.metric("IV Put usata", f"{_iv_put:.2%}" if _iv_put else "N/A", help=_fonte_put)
                     st.caption(
-                        "'Giorni validi' = quante IV utilizzabili trovate sui giorni esaminati (max 5, oggi incluso). "
-                        "Sotto 3 giorni validi la stima passa alla sola IV di oggi, se disponibile."
+                        f"Call: {_fonte_call} ({_stima_call['n_validi']}/{_stima_call['n_esaminati']} giorni validi). "
+                        f"Put: {_fonte_put} ({_stima_put['n_validi']}/{_stima_put['n_esaminati']} giorni validi)."
                     )
 
-                _idx_atm_default = min(
-                    range(len(_strikes_disponibili)),
-                    key=lambda i: abs(_strikes_disponibili[i] - spot_price)
-                )
-                _strike_scelto = st.selectbox(
-                    "Strike da analizzare nel grafico (default: più vicino allo spot)",
-                    options=_strikes_disponibili, index=_idx_atm_default,
-                    format_func=lambda k: f"{k:,.0f}", key="decay_strike_select"
-                )
-
-                _dte_max = int(df_selected_expiry.loc[df_selected_expiry['Strike'] == _strike_scelto, 'DTE_Days'].iloc[0])
-
-                if _dte_max <= 0:
-                    st.info("Questa scadenza è già a 0 giorni residui (o scaduta): nessuna curva di decadimento da mostrare.")
-                else:
-                    _iv_call, _fonte_call, _stima_call = _iv_finale_e_fonte(_strike_scelto, 'Call')
-                    _iv_put, _fonte_put, _stima_put = _iv_finale_e_fonte(_strike_scelto, 'Put')
-
-                    if _iv_call is None and _iv_put is None:
-                        st.warning(
-                            "IV non disponibile per questo strike né oggi né nei giorni precedenti in `dati/`: "
-                            "impossibile calcolare il decadimento. Prova un altro strike."
-                        )
-                    else:
-                        col_d1, col_d2, col_d3 = st.columns(3)
-                        col_d1.metric("Strike", f"{_strike_scelto:,.0f}")
-                        col_d2.metric("IV Call usata", f"{_iv_call:.2%}" if _iv_call else "N/A", help=_fonte_call)
-                        col_d3.metric("IV Put usata", f"{_iv_put:.2%}" if _iv_put else "N/A", help=_fonte_put)
+                    with st.expander("📋 Dettaglio giorni usati per la stima (strike selezionato)", expanded=False):
+                        for _tipo, _stima in [('Call', _stima_call), ('Put', _stima_put)]:
+                            st.markdown(f"**{_tipo}**")
+                            _df_det = pd.DataFrame([
+                                {
+                                    'Data': f"{d.strftime('%d/%m/%Y')} ({_WEEKDAYS_IT[d.weekday()]})",
+                                    'IV': f"{iv:.2%}" if iv is not None else "n/d (Settle non invertibile o giorno mancante)"
+                                }
+                                for d, iv in _stima['dettaglio']
+                            ])
+                            st.dataframe(_df_det, width="stretch", hide_index=True)
                         st.caption(
-                            f"Call: {_fonte_call} ({_stima_call['n_validi']}/{_stima_call['n_esaminati']} giorni validi). "
-                            f"Put: {_fonte_put} ({_stima_put['n_validi']}/{_stima_put['n_esaminati']} giorni validi)."
+                            "Sabati, domeniche e festivi non hanno un file in `dati/`: è normale che i giorni "
+                            "esaminati non siano consecutivi sul calendario."
                         )
 
-                        with st.expander("📋 Dettaglio giorni usati per la stima (strike selezionato)", expanded=False):
-                            for _tipo, _stima in [('Call', _stima_call), ('Put', _stima_put)]:
-                                st.markdown(f"**{_tipo}**")
-                                _df_det = pd.DataFrame([
-                                    {
-                                        'Data': f"{d.strftime('%d/%m/%Y')} ({_WEEKDAYS_IT[d.weekday()]})",
-                                        'IV': f"{iv:.2%}" if iv is not None else "n/d (Settle non invertibile o giorno mancante)"
-                                    }
-                                    for d, iv in _stima['dettaglio']
-                                ])
-                                st.dataframe(_df_det, width="stretch", hide_index=True)
-                            st.caption(
-                                "Sabati, domeniche e festivi non hanno un file in `dati/`: è normale che i giorni "
-                                "esaminati non siano consecutivi sul calendario."
-                            )
+                    _giorni = np.linspace(_dte_max, 0, 60)
+                    _fig_decay = go.Figure()
+                    if _iv_call is not None:
+                        _prezzi_call = [_bs_price(spot_price, _strike_scelto, max(g / 365.25, 1e-6),
+                                                   risk_free_rate, dividend_yield, _iv_call, 'Call') for g in _giorni]
+                        _fig_decay.add_trace(go.Scatter(
+                            x=_giorni, y=_prezzi_call, mode='lines', name='Call', line=dict(color='#34d399', width=2.5),
+                            hovertemplate='%{x:.1f} giorni residui<br>Call: %{y:,.2f}<extra></extra>'
+                        ))
+                    if _iv_put is not None:
+                        _prezzi_put = [_bs_price(spot_price, _strike_scelto, max(g / 365.25, 1e-6),
+                                                  risk_free_rate, dividend_yield, _iv_put, 'Put') for g in _giorni]
+                        _fig_decay.add_trace(go.Scatter(
+                            x=_giorni, y=_prezzi_put, mode='lines', name='Put', line=dict(color='#f87171', width=2.5),
+                            hovertemplate='%{x:.1f} giorni residui<br>Put: %{y:,.2f}<extra></extra>'
+                        ))
+                    _fig_decay.update_xaxes(title="Giorni alla scadenza", autorange='reversed')
+                    _fig_decay.update_yaxes(title="Prezzo teorico (Black-Scholes)")
+                    _fig_decay.update_layout(template='plotly_dark', height=450, margin=dict(l=10, r=10, t=30, b=10),
+                                              hovermode='x unified')
+                    st.plotly_chart(_fig_decay, width="stretch", key="decay_chart")
+                    st.caption(
+                        f"Curva calcolata con spot {spot_price:,.2f} tenuto fisso al valore odierno — solo il "
+                        f"tempo residuo cambia, da {_dte_max} giorni a 0. Strike {_strike_scelto:,.0f}."
+                    )
 
-                        _giorni = np.linspace(_dte_max, 0, 60)
-                        _fig_decay = go.Figure()
-                        if _iv_call is not None:
-                            _prezzi_call = [_bs_price(spot_price, _strike_scelto, max(g / 365.25, 1e-6),
-                                                       risk_free_rate, dividend_yield, _iv_call, 'Call') for g in _giorni]
-                            _fig_decay.add_trace(go.Scatter(
-                                x=_giorni, y=_prezzi_call, mode='lines', name='Call', line=dict(color='#34d399', width=2.5),
-                                hovertemplate='%{x:.1f} giorni residui<br>Call: %{y:,.2f}<extra></extra>'
-                            ))
-                        if _iv_put is not None:
-                            _prezzi_put = [_bs_price(spot_price, _strike_scelto, max(g / 365.25, 1e-6),
-                                                      risk_free_rate, dividend_yield, _iv_put, 'Put') for g in _giorni]
-                            _fig_decay.add_trace(go.Scatter(
-                                x=_giorni, y=_prezzi_put, mode='lines', name='Put', line=dict(color='#f87171', width=2.5),
-                                hovertemplate='%{x:.1f} giorni residui<br>Put: %{y:,.2f}<extra></extra>'
-                            ))
-                        _fig_decay.update_xaxes(title="Giorni alla scadenza", autorange='reversed')
-                        _fig_decay.update_yaxes(title="Prezzo teorico (Black-Scholes)")
-                        _fig_decay.update_layout(template='plotly_dark', height=450, margin=dict(l=10, r=10, t=30, b=10),
-                                                  hovermode='x unified')
-                        st.plotly_chart(_fig_decay, width="stretch", key="decay_chart")
-                        st.caption(
-                            f"Curva calcolata con spot {spot_price:,.2f} tenuto fisso al valore odierno — solo il "
-                            f"tempo residuo cambia, da {_dte_max} giorni a 0. Strike {_strike_scelto:,.0f}."
-                        )
-
-                        with st.expander("📋 Vedi in forma tabellare (giorni interi)", expanded=False):
-                            _giorni_interi = list(range(_dte_max, -1, -1))
-                            _tabella_decay = []
-                            for g in _giorni_interi:
-                                T = max(g / 365.25, 1e-6)
-                                _data_g = (selected_expiry_date - pd.Timedelta(days=g)).date()
-                                _riga = {'Giorni residui': g, 'Data': _data_g.strftime('%d/%m/%Y')}
-                                if _iv_call is not None:
-                                    _riga['Call'] = round(_bs_price(spot_price, _strike_scelto, T, risk_free_rate, dividend_yield, _iv_call, 'Call'), 2)
-                                if _iv_put is not None:
-                                    _riga['Put'] = round(_bs_price(spot_price, _strike_scelto, T, risk_free_rate, dividend_yield, _iv_put, 'Put'), 2)
-                                _tabella_decay.append(_riga)
-                            st.dataframe(pd.DataFrame(_tabella_decay), width="stretch", hide_index=True)
+                    with st.expander("📋 Vedi in forma tabellare (giorni interi)", expanded=False):
+                        _giorni_interi = list(range(_dte_max, -1, -1))
+                        _tabella_decay = []
+                        for g in _giorni_interi:
+                            T = max(g / 365.25, 1e-6)
+                            _data_g = (selected_expiry_date - pd.Timedelta(days=g)).date()
+                            _riga = {'Giorni residui': g, 'Data': _data_g.strftime('%d/%m/%Y')}
+                            if _iv_call is not None:
+                                _riga['Call'] = round(_bs_price(spot_price, _strike_scelto, T, risk_free_rate, dividend_yield, _iv_call, 'Call'), 2)
+                            if _iv_put is not None:
+                                _riga['Put'] = round(_bs_price(spot_price, _strike_scelto, T, risk_free_rate, dividend_yield, _iv_put, 'Put'), 2)
+                            _tabella_decay.append(_riga)
+                        st.dataframe(pd.DataFrame(_tabella_decay), width="stretch", hide_index=True)
 
     # ========================= TAB RIPARTIZIONE OI =========================
     with tab_ripart:
