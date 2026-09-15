@@ -28,7 +28,7 @@ from euronext_module import (
     scrivi_file_dati
 )
 from euronext_live_module import (
-    crea_sessione, fetch_live_html_batched, parse_live_html, fetch_scadenze_disponibili
+    crea_sessione, fetch_live_html_batched, parse_live_html, SCADENZE_NOTE
 )
 from documentazione_module import (
     impacchetta_html, elenca_markdown, elenca_pdf, elenca_html_pronti, elenca_html_sorgenti
@@ -209,9 +209,8 @@ else:  # "Scarica da Euronext (una data)"
         try:
             with st.spinner(f"Scaricando da Euronext per il {_data_scarico}..."):
                 _session = crea_sessione()
-                _scadenze_da_scaricare = fetch_scadenze_disponibili(_session)
                 _html_parts = fetch_live_html_batched(
-                    _session, expiries=_scadenze_da_scaricare, trade_date=_data_scarico.strftime("%m-%d-%Y"),
+                    _session, expiries=SCADENZE_NOTE, trade_date=_data_scarico.strftime("%m-%d-%Y"),
                     batch_size=5, verbose=False
                 )
                 _df_scarico = pd.concat([parse_live_html(h) for h in _html_parts], ignore_index=True)
@@ -1209,8 +1208,8 @@ ordini di grandezza più alto: sullo stesso asse il Volume sparirebbe schiacciat
 
             if len(_storico_filtrato) >= 2:
                 _fig = make_subplots(
-                    rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.05,
-                    row_heights=[0.5, 0.25, 0.25],
+                    rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.06,
+                    row_heights=[0.34, 0.33, 0.33],
                     subplot_titles=("Spot FTSEMIB", "Open Interest totale", "Volume totale")
                 )
                 _fig.add_trace(go.Scatter(
@@ -1278,7 +1277,7 @@ ordini di grandezza più alto: sullo stesso asse il Volume sparirebbe schiacciat
                     line=dict(color='#f97316'), hovertemplate='%{x}<br>Volume totale: %{y:,.0f}<extra></extra>'
                 ), row=3, col=1)
                 _fig.update_layout(
-                    height=950, template='plotly_dark', margin=dict(l=10, r=10, t=40, b=10), showlegend=False,
+                    height=650, template='plotly_dark', margin=dict(l=10, r=10, t=40, b=10), showlegend=False,
                     hovermode='x unified'
                 )
                 _fig.update_xaxes(showspikes=True, spikemode='across', spikesnap='cursor',

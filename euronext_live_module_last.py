@@ -9,13 +9,6 @@
 # ("as of DD Mon YYYY HH:MM CET") diverso da blocco a blocco: viene usato per
 # popolare automaticamente la colonna "ora" nel log eventi, senza doverla
 # scrivere a mano.
-#
-# Ultima modifica: 2026-09-08
-# - Aggiunta fetch_scadenze_disponibili(): legge le scadenze attualmente
-#   quotate direttamente dalla pagina Settlement Prices, invece di affidarsi
-#   solo alla lista statica SCADENZE_NOTE (che va aggiornata a mano e si
-#   disallinea quando una mensile va a settlement e ne entra una nuova).
-#   SCADENZE_NOTE resta come fallback se il parsing della pagina fallisce.
 # -----------------------------------------------------------------------------
 
 import re
@@ -26,9 +19,6 @@ import requests
 
 ENDPOINT = "https://live.euronext.com/en/ajax/getTabPrices/MIB-DMIL/options"
 REFERER = "https://live.euronext.com/en/product/index-options/MIB-DMIL/settlement-prices"
-
-# Data di ultima modifica del modulo (vedi changelog in testa al file).
-ULTIMA_MODIFICA = "2026-09-08"
 
 # Elenco di riserva delle scadenze note (formato MM-01-YYYY richiesto dall'endpoint).
 # Va aggiornato di tanto in tanto man mano che le vecchie scadono e ne aprono di nuove
@@ -67,51 +57,6 @@ def crea_sessione():
     })
     session.get(REFERER, timeout=15)
     return session
-
-
-# Mesi abbreviati inglesi come compaiono nella pagina Settlement Prices
-# (sezione "Select Delivery Month(s)"), per convertirli nel formato
-# 'MM-01-YYYY' richiesto dall'endpoint AJAX.
-_MESI_EN = {
-    'Jan': '01', 'Feb': '02', 'Mar': '03', 'Apr': '04', 'May': '05', 'Jun': '06',
-    'Jul': '07', 'Aug': '08', 'Sep': '09', 'Oct': '10', 'Nov': '11', 'Dec': '12',
-}
-
-_DELIVERY_MONTHS_BLOCK_RE = re.compile(
-    r'Select Delivery Month\(s\)(.*?)Trade Date', re.DOTALL
-)
-_MESE_ANNO_RE = re.compile(r'\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{4})\b')
-
-
-def fetch_scadenze_disponibili(session):
-    """
-    Legge dalla pagina Settlement Prices (stessa REFERER usata da crea_sessione)
-    l'elenco delle scadenze effettivamente quotate in questo momento su Euronext
-    per MIB-DMIL, invece di affidarsi alla lista statica SCADENZE_NOTE.
-
-    Le scadenze (mensili e trimestrali) cambiano nel tempo: quando una mensile
-    va a settlement sparisce dalla pagina e ne compare una nuova al suo posto
-    (in genere restano visibili 2-3 mensili contemporaneamente). Leggerla dal
-    vivo evita di dover inseguire manualmente questo turnover.
-
-    Returns: lista di stringhe 'MM-01-YYYY', in ordine cronologico.
-             Se il parsing fallisce per qualsiasi motivo (pagina irraggiungibile,
-             formato cambiato, sezione non trovata), ricade su SCADENZE_NOTE
-             com'era prima: questa funzione non deve mai bloccare lo scarico.
-    """
-    try:
-        resp = session.get(REFERER, timeout=15)
-        resp.raise_for_status()
-        blocco = _DELIVERY_MONTHS_BLOCK_RE.search(resp.text)
-        if not blocco:
-            return list(SCADENZE_NOTE)
-        trovate = _MESE_ANNO_RE.findall(blocco.group(1))
-        if not trovate:
-            return list(SCADENZE_NOTE)
-        scadenze = {f"{_MESI_EN[mese]}-01-{anno}" for mese, anno in trovate}
-        return sorted(scadenze, key=lambda s: (s[-4:], s[:2]))  # ordina per anno, poi mese
-    except Exception:
-        return list(SCADENZE_NOTE)
 
 
 def fetch_live_html(session, expiries=None, trade_date=None):

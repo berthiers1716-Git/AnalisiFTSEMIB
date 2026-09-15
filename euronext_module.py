@@ -21,6 +21,7 @@ MONTH_MAP = {
     'Jan': 1, 'Feb': 2, 'Mar': 3, 'Apr': 4, 'May': 5, 'Jun': 6,
     'Jul': 7, 'Aug': 8, 'Sep': 9, 'Oct': 10, 'Nov': 11, 'Dec': 12
 }
+MESI_ABBR = {v: k for k, v in MONTH_MAP.items()}
 
 
 def third_friday(year, month):
@@ -29,6 +30,48 @@ def third_friday(year, month):
     fridays = [d for d in c.itermonthdates(year, month)
                if d.weekday() == 4 and d.month == month]
     return pd.Timestamp(fridays[2])
+
+
+def scrivi_file_dati(df_raw, filepath, trade_date):
+    """
+    Scrive df_raw (colonne Strike, Type, Settle, Vol, OI, Expiration Date - lo
+    schema prodotto da euronext_live_module.parse_live_html) nel formato a
+    blocchi/tab-separated compatibile con parse_euronext_text, lo stesso
+    formato dei file copia-incolla salvati in dati/YYYYMMDD.csv.
+
+    Condivisa tra rigenera_file_dati.py (script da terminale) e l'app Streamlit
+    (download da Euronext direttamente dalla UI), cosi' la logica di scrittura
+    vive in un solo posto.
+
+    Open/High/Low/Last/Change non sono tracciati dal fetch live: si scrivono
+    come placeholder, dato che non vengono comunque usati a valle - i calcoli
+    usano solo Strike/Type/Settle/Volume/Open Interest.
+    """
+    header_cols = "Strike\tType\tOpen\tHigh\tLow\tLast\tChange\tSettle\tVolume\tOpen Interest"
+    data_str = trade_date.strftime("%-d %B %Y")  # es. "10 July 2026"
+
+    lines = []
+    for exp_date, gruppo in df_raw.groupby('Expiration Date'):
+        mese_abbr = MESI_ABBR[exp_date.month]
+        anno = exp_date.year
+        lines.append(f"{mese_abbr} {anno} Prices - {data_str}")
+        lines.append("")
+        lines.append(header_cols)
+        totale_volume = 0
+        for row in gruppo.itertuples():
+            tipo_lettera = 'C' if row.Type == 'Call' else 'P'
+            oi_str = '-' if pd.isna(row.OI) else f"{row.OI:.0f}"
+            settle_str = f"{row.Settle:.2f}" if pd.notna(row.Settle) else "N/A"
+            vol_int = int(row.Vol)
+            totale_volume += vol_int
+            lines.append(
+                f"{row.Strike:.0f}\t{tipo_lettera}\t0.00\t0.00\t0.00\t0.00\tN/A\t{settle_str}\t{vol_int}\t{oi_str}"
+            )
+        lines.append(f"\t\t\t\t\t\t\tTotal\t{totale_volume}\t-")
+        lines.append("")
+
+    with open(filepath, 'w', encoding='utf-8') as f:
+        f.write('\n'.join(lines))
 
 
 def parse_euronext_text(text):
@@ -441,7 +484,14 @@ def log_totali_giornalieri(df_raw, analysis_date, log_path, spot=None):
     """
     data_str = analysis_date.date().isoformat()
     volume_totale = df_raw['Vol'].sum()
-    oi_totale = df_raw['OI'].sum(skipna=True)  # NaN ignorati, non trattati come 0
+    # ATTENZIONE: .sum(skipna=True) su una colonna INTERAMENTE NaN restituisce 0.0,
+    # non NaN (somma di un insieme vuoto = 0 per convenzione pandas/numpy). Se l'OI
+    # non e' disponibile per NESSUNO strike quel giorno (es. file scaricato prima
+    # che l'OI ufficiale sia stato pubblicato), questo produrrebbe un punto a 0 nel
+    # grafico storico, che schiaccia la scala dell'asse Y e rende illeggibile il
+    # resto della serie. Si forza esplicitamente a NaN in quel caso: il grafico
+    # mostrera' un'interruzione (gap) per quel giorno invece di un crollo a zero.
+    oi_totale = df_raw['OI'].sum(skipna=True) if df_raw['OI'].notna().any() else np.nan
 
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
     cols = ['data', 'volume_totale', 'oi_totale', 'spot']
@@ -500,7 +550,10 @@ def ricostruisci_storico_totali(dati_folder, log_path, percorso_prezzi=None):
         righe.append({
             'data': data.isoformat(),
             'volume_totale': df_raw['Vol'].sum(),
-            'oi_totale': df_raw['OI'].sum(skipna=True),
+            # Stesso motivo di log_totali_giornalieri: NaN esplicito se l'OI manca
+            # del tutto quel giorno, non 0 (altrimenti la riga in ricostruzione
+            # forzerebbe un crollo a zero e schiaccerebbe la scala del grafico).
+            'oi_totale': df_raw['OI'].sum(skipna=True) if df_raw['OI'].notna().any() else np.nan,
             'spot': spot_by_date.get(data, np.nan),
         })
 
@@ -543,7 +596,7 @@ def _load_spot_history(storico_totali_path, index_prices_path=None):
        (piu' preciso quando disponibile, es. spot_preciso verificato a mano altrove).
     2) CSV storico prezzi indice (es. INDEX_FTSEMIB_1D.csv) - copre anche le date in
        cui storico_totali.csv non e' stato popolato (es. mai ricostruito, o file
-       arrivato in dati/ tramite ripara_file_dati.py/recupera_storico.py).
+       arrivato in dati/ tramite rigenera_file_dati.py).
     Ritorna dict vuoto per le fonti mancanti, mai solleva eccezioni.
     """
     spot_by_date = {}
