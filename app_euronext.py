@@ -9,7 +9,22 @@
 # Euronext non fornisce Delta/Gamma/IV pronti. Vengono derivati qui invertendo
 # Black-Scholes dal prezzo "Settle" di ciascuna opzione (euronext_module.py).
 # Sono quindi stime di modello, non dati di mercato osservati.
+#
+# Ultima modifica: 2026-09-15 - v2.97
+# - Corretta la scadenza di novembre mancante nello scarico live (SCADENZE_NOTE
+#   statica -> fetch_scadenze_disponibili(), letta dinamicamente da Euronext).
+# - Il corpo principale (tab) ora si apre col solo df_raw, non serve più anche
+#   lo spot: aggiunto il tab "Dati" (sempre disponibile) e differenziato il
+#   messaggio nei tab che richiedono Black-Scholes (spot mancante vs OI
+#   mancante), riusando il meccanismo _oi_disponibile già esistente.
+# - Numero di versione ora incorporato direttamente qui (APP_VERSION sotto),
+#   non solo in VERSION.txt esterno: così viaggia sempre insieme al codice,
+#   anche se VERSION.txt venisse dimenticato copiando solo questo file tra
+#   cartelle o macchine (stessa idea già applicata a gestore_git.py). Da
+#   aggiornare ad ogni release, insieme a questo changelog.
 # -----------------------------------------------------------------------------
+
+APP_VERSION = "2.97"
 
 import streamlit as st
 import pandas as pd
@@ -68,7 +83,7 @@ def _leggi_versione():
     except FileNotFoundError:
         return None
 
-_app_version = _leggi_versione()
+_app_version = APP_VERSION or _leggi_versione()
 _titolo = "📊 FTSEMIB Options Analyzer (Euronext)"
 if _app_version:
     _titolo += f"  `v{_app_version}`"
@@ -123,6 +138,50 @@ with st.expander("📖 Glossario dei termini (parti da qui se sei alle prime arm
 - **Skew** — differenza di IV tra strike: di solito le put OTM costano di più (protezione al ribasso).
 - **Term structure** — come cambia la IV tra scadenze brevi e lunghe.
 - **Pinning** — tendenza del prezzo a "incollarsi" agli strike molto carichi verso la scadenza.
+        """
+    )
+
+with st.expander("🖥️ Scaricare dati da terminale (opzioni e future, anche storico)", expanded=False):
+    st.markdown(
+        """
+Questa pagina scarica un giorno alla volta (quello scelto qui sopra). Per scaricare
+**più giorni insieme** (es. ricostruire uno storico), o l'Open Interest del
+**future FIB** (non le opzioni), si usano due script a parte da terminale — vanno
+lanciati dalla stessa cartella di questa app (importano direttamente
+`euronext_live_module.py`/`euronext_module.py`).
+
+**Opzioni — backfill storico (`scarica_backfill_opzioni.py`)**
+
+Scrive un file `dati/YYYYMMDD.csv` per ciascun giorno, nello stesso formato che
+questa pagina legge già con "Scegli dalla cartella dati/" qui sopra.
+
+```
+python3 scarica_backfill_opzioni.py --data 2026-09-14                        # un solo giorno
+python3 scarica_backfill_opzioni.py --da 2026-06-19 --a 2026-09-14           # intervallo (backfill)
+python3 scarica_backfill_opzioni.py --da 2026-06-19 --a 2026-09-14 --forza   # riscrive anche i giorni già presenti
+python3 scarica_backfill_opzioni.py --da 2026-06-19 --a 2026-09-14 --pausa 30   # più prudente verso il server
+```
+
+Salta automaticamente sabato/domenica; un giorno che dà errore (es. festivo di
+borsa) non blocca gli altri - viene segnalato e si passa al successivo.
+
+**Future FIB — Open Interest (`scarica_futures_euronext.py`)**
+
+A differenza delle opzioni (un file per giorno, tante scadenze/strike), qui c'è
+una sola riga per scadenza al giorno: tutto finisce in un unico storico CSV
+(`dati_locali/storico_oi_future.csv`) — pensato soprattutto per non perdere l'OI
+di una scadenza quando esce dalla pagina live di Euronext dopo il settlement
+(tipico durante le settimane della "strega").
+
+```
+python3 scarica_futures_euronext.py                                          # solo oggi
+python3 scarica_futures_euronext.py --data 2026-06-19                        # un giorno storico
+python3 scarica_futures_euronext.py --da 2026-06-19 --a 2026-09-14 --pausa 30    # intervallo
+```
+
+⚠️ Entrambi gli script vanno lanciati da terminale (non da questa pagina): sono
+pensati per scarichi lunghi/batch, con pause configurabili per non sovraccaricare
+il server Euronext.
         """
     )
 
