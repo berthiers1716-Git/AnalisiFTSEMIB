@@ -10,19 +10,6 @@
 # Black-Scholes dal prezzo "Settle" di ciascuna opzione (euronext_module.py).
 # Sono quindi stime di modello, non dati di mercato osservati.
 #
-# Ultima modifica: 2026-09-16 - v2.99.1
-# - Aggiornato il default di Risk-free al nuovo tasso BCE sui depositi (2,25% ->
-#   2,50%), dopo il rialzo di 0,25 punti deciso il 10/9/2026, in vigore dal
-#   16/9/2026 - esempio pratico del perché in sidebar è segnalato come "🟡
-#   aggiornamento periodico, non giornaliero, segue le decisioni BCE".
-#
-# Ultima modifica: 2026-09-15 - v2.99
-# - Nell'expander "Altri parametri": riordinati per rilevanza ed etichettati con
-#   un colore/nota su quanto spesso ha senso rivederli - 🔴 Soglia volume (il
-#   più rilevante, in cima), 🟡 Risk-free/Dividend yield (periodico, non
-#   giornaliero: risk-free segue le decisioni BCE, dividend yield si muove
-#   lentamente nell'anno), 🟢 Moltiplicatore contratto (invariato da anni).
-#
 # Ultima modifica: 2026-09-15 - v2.98
 # - Sidebar riorganizzata: solo lo Spot (l'unico valore che cambia ogni giorno)
 #   resta sempre visibile; Risk-free/Dividend yield/Moltiplicatore/Soglia volume
@@ -47,7 +34,7 @@
 #   aggiornare ad ogni release, insieme a questo changelog.
 # -----------------------------------------------------------------------------
 
-APP_VERSION = "2.99.1"
+APP_VERSION = "2.98"
 
 import streamlit as st
 import pandas as pd
@@ -395,7 +382,22 @@ with st.sidebar:
     # v2.98: parametri secondari (cambiano raramente rispetto allo spot) raccolti
     # in un expander compatto, per non occupare spazio verticale ogni giorno.
     with st.expander("Altri parametri", expanded=False):
-        st.caption("🔴 Il più rilevante da tenere d'occhio, sotto:")
+        col_r, col_d = st.columns(2)
+        with col_r:
+            risk_free_rate = st.number_input(
+                "Risk-free (%)", min_value=-5.0, max_value=25.0, value=2.25, step=0.05, format="%.2f",
+                help="Default: tasso BCE sui depositi in vigore dal 17/6/2026."
+            ) / 100.0
+        with col_d:
+            dividend_yield = st.number_input(
+                "Dividend yield (%)", min_value=0.0, max_value=25.0, value=4.20, step=0.10, format="%.2f",
+                help="Default: stima dividend yield FTSEMIB 2026 (~4.2%, contro l'1.3% USA dell'app CBOE)."
+            ) / 100.0
+        contract_multiplier = st.number_input(
+            "Moltiplicatore contratto (€/punto)",
+            min_value=0.1, value=2.5, step=0.1, format="%.1f",
+            help="MIBO (FTSEMIB, Borsa Italiana/Euronext): €2.5 per punto indice, non 100 come SPX."
+        )
         volume_threshold = st.number_input(
             "Soglia volume significativo (contratti)",
             min_value=1, value=100, step=10,
@@ -403,34 +405,6 @@ with st.sidebar:
                  "Il notional stimato in € nel log aiuta a giudicare la rilevanza reale anche per strike "
                  "deep ITM lontani dallo spot, dove pochi contratti pesano molto di più."
         )
-
-        st.divider()
-        st.caption(
-            "🟡 Aggiornamento periodico, non giornaliero: Risk-free segue le decisioni BCE (cambia "
-            "solo quando la BCE muove i tassi); Dividend yield si muove lentamente nel corso dell'anno "
-            "(ha senso ricontrollarlo ogni tanto, es. trimestralmente)."
-        )
-        col_r, col_d = st.columns(2)
-        with col_r:
-            risk_free_rate = st.number_input(
-                "Risk-free (%)", min_value=-5.0, max_value=25.0, value=2.50, step=0.05, format="%.2f",
-                help="Default: tasso BCE sui depositi in vigore dal 16/9/2026 (rialzo di 0,25 punti deciso il 10/9/2026)."
-            ) / 100.0
-        with col_d:
-            dividend_yield = st.number_input(
-                "Dividend yield (%)", min_value=0.0, max_value=25.0, value=4.20, step=0.10, format="%.2f",
-                help="Default: stima dividend yield FTSEMIB 2026 (~4.2%, contro l'1.3% USA dell'app CBOE)."
-            ) / 100.0
-
-        st.divider()
-        st.caption("🟢 Cambia raramente (MIBO: €2,5/punto, invariato da anni):")
-        contract_multiplier = st.number_input(
-            "Moltiplicatore contratto (€/punto)",
-            min_value=0.1, value=2.5, step=0.1, format="%.1f",
-            help="MIBO (FTSEMIB, Borsa Italiana/Euronext): €2.5 per punto indice, non 100 come SPX."
-        )
-
-        st.divider()
         st.caption(
             "Questi valori incidono su tutte le esposizioni nozionali (GEX/DEX/VEX) e sui "
             "livelli di Flip. Il risk-free e il dividend yield incidono anche sulla IV derivata."
