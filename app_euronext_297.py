@@ -10,16 +10,6 @@
 # Black-Scholes dal prezzo "Settle" di ciascuna opzione (euronext_module.py).
 # Sono quindi stime di modello, non dati di mercato osservati.
 #
-# Ultima modifica: 2026-09-15 - v2.98
-# - Sidebar riorganizzata: solo lo Spot (l'unico valore che cambia ogni giorno)
-#   resta sempre visibile; Risk-free/Dividend yield/Moltiplicatore/Soglia volume
-#   spostati in un expander compatto "Altri parametri" (due colonne per i primi
-#   due). Larghezza di base della sidebar ridotta via CSS (resta ridimensionabile
-#   a mano trascinando il bordo).
-# - Aggiunta sezione "🔗 Link utili" in sidebar: collegamenti diretti alle pagine
-#   Euronext (opzioni MIBO, future FIB) e rimando al Glossario/Help in cima alla
-#   pagina principale.
-#
 # Ultima modifica: 2026-09-15 - v2.97
 # - Corretta la scadenza di novembre mancante nello scarico live (SCADENZE_NOTE
 #   statica -> fetch_scadenze_disponibili(), letta dinamicamente da Euronext).
@@ -34,7 +24,7 @@
 #   aggiornare ad ogni release, insieme a questo changelog.
 # -----------------------------------------------------------------------------
 
-APP_VERSION = "2.98"
+APP_VERSION = "2.97"
 
 import streamlit as st
 import pandas as pd
@@ -82,12 +72,6 @@ st.markdown("""
     div[data-testid="stMetric"] {
         background-color: #111827; border: 1px solid #1f2937;
         border-radius: 8px; padding: 10px;
-    }
-    /* v2.98: colonna sinistra più stretta di base (default Streamlit ~21rem) -
-       pochi parametri, non serve tutto quello spazio; resta comunque
-       ridimensionabile a mano trascinando il bordo. */
-    section[data-testid="stSidebar"] {
-        width: 260px !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -355,7 +339,7 @@ elif percorso_prezzi and analysis_date is None:
 # SIDEBAR: parametri di mercato (default FTSEMIB, non SPX)
 # -----------------------------------------------------------------------------
 with st.sidebar:
-    st.header("⚙️ Parametri")
+    st.header("⚙️ Parametri di mercato")
     # Se lo storico prezzi ha trovato una corrispondenza, la propone come default;
     # altrimenti resta libero (nessun valore precompilato "fisso" da dimenticare di cambiare).
     # NOTA (corretto 18/08/2026): Streamlit cancella automaticamente da session_state la
@@ -378,43 +362,35 @@ with st.sidebar:
         help="Precompilato automaticamente se carichi lo storico prezzi (punto 2 sopra), in "
              "qualunque ordine carichi i due file; altrimenti va inserito a mano."
     )
-
-    # v2.98: parametri secondari (cambiano raramente rispetto allo spot) raccolti
-    # in un expander compatto, per non occupare spazio verticale ogni giorno.
-    with st.expander("Altri parametri", expanded=False):
-        col_r, col_d = st.columns(2)
-        with col_r:
-            risk_free_rate = st.number_input(
-                "Risk-free (%)", min_value=-5.0, max_value=25.0, value=2.25, step=0.05, format="%.2f",
-                help="Default: tasso BCE sui depositi in vigore dal 17/6/2026."
-            ) / 100.0
-        with col_d:
-            dividend_yield = st.number_input(
-                "Dividend yield (%)", min_value=0.0, max_value=25.0, value=4.20, step=0.10, format="%.2f",
-                help="Default: stima dividend yield FTSEMIB 2026 (~4.2%, contro l'1.3% USA dell'app CBOE)."
-            ) / 100.0
-        contract_multiplier = st.number_input(
-            "Moltiplicatore contratto (€/punto)",
-            min_value=0.1, value=2.5, step=0.1, format="%.1f",
-            help="MIBO (FTSEMIB, Borsa Italiana/Euronext): €2.5 per punto indice, non 100 come SPX."
-        )
-        volume_threshold = st.number_input(
-            "Soglia volume significativo (contratti)",
-            min_value=1, value=100, step=10,
-            help="Sopra questa soglia (per singolo strike/scadenza) l'evento viene proposto per il log. "
-                 "Il notional stimato in € nel log aiuta a giudicare la rilevanza reale anche per strike "
-                 "deep ITM lontani dallo spot, dove pochi contratti pesano molto di più."
-        )
-        st.caption(
-            "Questi valori incidono su tutte le esposizioni nozionali (GEX/DEX/VEX) e sui "
-            "livelli di Flip. Il risk-free e il dividend yield incidono anche sulla IV derivata."
-        )
-
     st.divider()
-    st.markdown("**🔗 Link utili**")
-    st.markdown("[📊 Euronext — Opzioni MIBO](https://live.euronext.com/en/product/index-options/MIB-DMIL/settlement-prices)")
-    st.markdown("[📈 Euronext — Future FIB](https://live.euronext.com/en/product/index-futures/FIB-DMIL/settlement-prices)")
-    st.caption("📖 Help/Glossario e istruzioni di scarico: in cima alla pagina principale.")
+    risk_free_rate = st.number_input(
+        "Risk-free rate (% annuo)",
+        min_value=-5.0, max_value=25.0, value=2.25, step=0.05, format="%.2f",
+        help="Default: tasso BCE sui depositi in vigore dal 17/6/2026."
+    ) / 100.0
+    dividend_yield = st.number_input(
+        "Dividend yield (% annuo)",
+        min_value=0.0, max_value=25.0, value=4.20, step=0.10, format="%.2f",
+        help="Default: stima dividend yield FTSEMIB 2026 (~4.2%, contro l'1.3% USA dell'app CBOE)."
+    ) / 100.0
+    contract_multiplier = st.number_input(
+        "Moltiplicatore contratto (€/punto)",
+        min_value=0.1, value=2.5, step=0.1, format="%.1f",
+        help="MIBO (FTSEMIB, Borsa Italiana/Euronext): €2.5 per punto indice, non 100 come SPX."
+    )
+    st.divider()
+    volume_threshold = st.number_input(
+        "Soglia volume significativo (contratti)",
+        min_value=1, value=100, step=10,
+        help="Sopra questa soglia (per singolo strike/scadenza) l'evento viene proposto per il log. "
+             "Il notional stimato in € nel log aiuta a giudicare la rilevanza reale anche per strike "
+             "deep ITM lontani dallo spot, dove pochi contratti pesano molto di più."
+    )
+    st.divider()
+    st.caption(
+        "Questi valori incidono su tutte le esposizioni nozionali (GEX/DEX/VEX) e sui "
+        "livelli di Flip. Il risk-free e il dividend yield incidono anche sulla IV derivata."
+    )
 
 VOLUME_LOG_PATH = "dati_locali/eventi_volume.csv"
 DATI_FOLDER_DEFAULT = "dati"
