@@ -10,37 +10,6 @@
 # Black-Scholes dal prezzo "Settle" di ciascuna opzione (euronext_module.py).
 # Sono quindi stime di modello, non dati di mercato osservati.
 #
-# Ultima modifica: 2026-09-16 - v3.0
-# Versione "punto di fork": da qui AnalisiOpzioniFTSEMIB prosegue con piccoli
-# miglioramenti mirati alle opzioni, mentre AnalisiFTSEMIB (nuovo repository,
-# stessa cronologia fino a qui) diventa il ramo di sviluppo più sofisticato
-# (altre analisi oltre le opzioni, es. OI future).
-#
-# Riepilogo cumulativo dei cambiamenti dalla v2.9x:
-# - Sidebar riorganizzata e più stretta: solo Spot sempre visibile, il resto
-#   (Risk-free/Dividend yield/Moltiplicatore/Soglia volume) in un expander
-#   "Parametri (Vol., Risk Free...)" con etichette di rilevanza (🔴🟡🟢) e
-#   nota su quando ha senso rivederli.
-# - Aggiunta sezione "🔗 Link utili" (Euronext opzioni/future) e tre bottoni
-#   "Vai a" (Help/Glossario, Istruzioni di scarico, Teoria) che saltano
-#   davvero al contenuto — sfruttando key/on_change su st.tabs (rilasciato da
-#   Streamlit a marzo 2026) per il salto al tab Teoria, e un flag "usa e
-#   getta" in session_state per aprire gli expander Glossario/Istruzioni
-#   (necessario perché quegli expander sono definiti PRIMA del bottone nel
-#   codice: mutare session_state di un widget già istanziato nello stesso
-#   giro fallisce, il flag letto al momento della creazione invece no).
-# - Verificato con un giro di test funzionali headless (streamlit.testing.v1.
-#   AppTest): tutti i 15 tab, sia con Spot impostato sia senza, più i tre
-#   bottoni "Vai a" - nessuna eccezione.
-#
-# Ultima modifica: 2026-09-16 - v2.99.2
-# - Rinominato l'expander "Altri parametri" -> "Parametri (Vol., Risk Free...)"
-#   per anticiparne il contenuto anche da chiuso.
-# - Nota "Link utili" in sidebar trasformata in elenco puntato (Help/Glossario,
-#   Istruzioni di scarico, Teoria). Nessun vero link cliccabile verso il tab
-#   Teoria: st.tabs non supporta un'ancora stabile per aprire un tab specifico
-#   da un altro punto della pagina, resta quindi testo informativo.
-#
 # Ultima modifica: 2026-09-16 - v2.99.1
 # - Aggiornato il default di Risk-free al nuovo tasso BCE sui depositi (2,25% ->
 #   2,50%), dopo il rialzo di 0,25 punti deciso il 10/9/2026, in vigore dal
@@ -78,7 +47,7 @@
 #   aggiornare ad ogni release, insieme a questo changelog.
 # -----------------------------------------------------------------------------
 
-APP_VERSION = "3.0"
+APP_VERSION = "2.99.1"
 
 import streamlit as st
 import pandas as pd
@@ -157,8 +126,7 @@ st.caption(
     "vengono scartate automaticamente e segnalate."
 )
 
-with st.expander("📖 Glossario dei termini (parti da qui se sei alle prime armi)",
-                  expanded=st.session_state.pop("_apri_glossario", False)):
+with st.expander("📖 Glossario dei termini (parti da qui se sei alle prime armi)", expanded=False):
     st.markdown(
         """
 **Le basi**
@@ -202,8 +170,7 @@ with st.expander("📖 Glossario dei termini (parti da qui se sei alle prime arm
         """
     )
 
-with st.expander("🖥️ Scaricare dati da terminale (opzioni e future, anche storico)",
-                  expanded=st.session_state.pop("_apri_istruzioni_scarico", False)):
+with st.expander("🖥️ Scaricare dati da terminale (opzioni e future, anche storico)", expanded=False):
     st.markdown(
         """
 Questa pagina scarica un giorno alla volta (quello scelto qui sopra). Per scaricare
@@ -427,7 +394,7 @@ with st.sidebar:
 
     # v2.98: parametri secondari (cambiano raramente rispetto allo spot) raccolti
     # in un expander compatto, per non occupare spazio verticale ogni giorno.
-    with st.expander("Parametri (Vol., Risk Free...)", expanded=False):
+    with st.expander("Altri parametri", expanded=False):
         st.caption("🔴 Il più rilevante da tenere d'occhio, sotto:")
         volume_threshold = st.number_input(
             "Soglia volume significativo (contratti)",
@@ -473,16 +440,7 @@ with st.sidebar:
     st.markdown("**🔗 Link utili**")
     st.markdown("[📊 Euronext — Opzioni MIBO](https://live.euronext.com/en/product/index-options/MIB-DMIL/settlement-prices)")
     st.markdown("[📈 Euronext — Future FIB](https://live.euronext.com/en/product/index-futures/FIB-DMIL/settlement-prices)")
-    st.caption("**Vai a (in cima o in fondo alla pagina principale):**")
-    if st.button("📖 Help/Glossario", key="btn_vai_glossario", width="stretch"):
-        st.session_state["_apri_glossario"] = True
-        st.rerun()
-    if st.button("📥 Istruzioni di scarico", key="btn_vai_istruzioni", width="stretch"):
-        st.session_state["_apri_istruzioni_scarico"] = True
-        st.rerun()
-    if st.button("📚 Teoria", key="btn_vai_teoria", width="stretch"):
-        st.session_state["tab_principale"] = "📚 Teoria"
-        st.rerun()
+    st.caption("📖 Help/Glossario e istruzioni di scarico: in cima alla pagina principale.")
 
 VOLUME_LOG_PATH = "dati_locali/eventi_volume.csv"
 DATI_FOLDER_DEFAULT = "dati"
@@ -599,7 +557,7 @@ if df_raw is not None:
         '🎯 Support/Res (OI & Vol)', '📉 Stats', '📈 Vol Surface', '📋 Eventi Volume',
         '📈 Andamento Storico', '📝 Note', '⏳ Decadimento', '⚖️ Ripartizione OI', '🚂 Treno',
         '🌀 Cicli', '📚 Teoria'
-    ], key="tab_principale", on_change="rerun")
+    ])
 
     # ========================= TAB SUMMARY =========================
     with tab_dati:
