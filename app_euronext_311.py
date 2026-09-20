@@ -10,17 +10,6 @@
 # Black-Scholes dal prezzo "Settle" di ciascuna opzione (euronext_module.py).
 # Sono quindi stime di modello, non dati di mercato osservati.
 #
-# Ultima modifica: 2026-09-20 - v3.2
-# - Tab Cicli: aggiunte etichette data/valore direttamente sui pivot rilevati
-#   (non solo hover), con interruttore per disattivarle se il grafico diventa
-#   affollato su "Tutto" lo storico. Primo passo verso un confronto più
-#   leggibile con la nomenclatura T+2 (mensile, 32 barre)/T+3 (trimestrale
-#   grosso modo, 64 barre) usata nel metodo ciclico di Elico - rilevamento
-#   automatico "a grana grossa" e mappatura manuale di T/T-1 restano da fare.
-# - Applicata preventivamente anche qui la correzione hovermode='closest'
-#   (stessa causa già risolta nel tab Treno: marker sparsi + candele dense
-#   con 'x unified' possono far "saltare" l'hover su alcune barre).
-#
 # Ultima modifica: 2026-09-17 - v3.1.1
 # - Corretto il salto di 1-2 barre nell'hover del grafico Treno, segnalato con
 #   settlement o pornociclo attivi: hovermode='x unified' con trace sparse
@@ -114,7 +103,7 @@
 #   aggiornare ad ogni release, insieme a questo changelog.
 # -----------------------------------------------------------------------------
 
-APP_VERSION = "3.2"
+APP_VERSION = "3.1.1"
 
 import streamlit as st
 import pandas as pd
@@ -2534,7 +2523,7 @@ valutazione resta salvata anche cambiando filtro periodo.
                             "Tipo grafico", ["Candele", "Barre"], horizontal=True, key="cicli_tipo_grafico"
                         )
 
-                    col_cy1, col_cy2, col_cy3, col_cy4 = st.columns(4)
+                    col_cy1, col_cy2, col_cy3 = st.columns(3)
                     with col_cy1:
                         _ciclo_barre_cicli = st.number_input(
                             "Lunghezza ciclo (barre del timeframe scelto)",
@@ -2547,12 +2536,6 @@ valutazione resta salvata anche cambiando filtro periodo.
                     with col_cy3:
                         _mostra_ciclo_standard_cicli = st.checkbox(
                             "Cicli diritti (da minimi)", value=True, key="cicli_mostra_standard"
-                        )
-                    with col_cy4:
-                        _mostra_etichette_cicli = st.checkbox(
-                            "Etichette data/valore sui pivot", value=True, key="cicli_mostra_etichette",
-                            help="Utile su un daily denso dove leggere data/livello a colpo d'occhio è "
-                                 "difficile - disattivala se il grafico diventa troppo affollato (es. su 'Tutto')."
                         )
                     _finestra_conferma_cicli = max(1, round(_ciclo_barre_cicli / 4))
                     st.caption(
@@ -2618,33 +2601,20 @@ valutazione resta salvata anche cambiando filtro periodo.
                     if not _pivot_alti_cicli.empty:
                         _fig_cicli.add_trace(go.Scatter(
                             x=_pivot_alti_cicli['time'], y=_pivot_alti_cicli['valore'],
-                            mode='markers+text' if _mostra_etichette_cicli else 'markers',
-                            name='Ciclo inverso (da massimo)',
-                            text=(pd.to_datetime(_pivot_alti_cicli['time']).dt.strftime('%d/%m')
-                                  + '<br>' + _pivot_alti_cicli['valore'].round().astype(int).astype(str)),
-                            textposition='top center',
-                            textfont=dict(color='#c084fc', size=10),
+                            mode='markers', name='Ciclo inverso (da massimo)',
                             marker=dict(color='#c084fc', size=13, symbol='triangle-down'),
                             hovertemplate='%{x}<br>Massimo confermato: %{y:,.2f}<extra></extra>'
                         ))
                     if not _pivot_bassi_cicli.empty:
                         _fig_cicli.add_trace(go.Scatter(
                             x=_pivot_bassi_cicli['time'], y=_pivot_bassi_cicli['valore'],
-                            mode='markers+text' if _mostra_etichette_cicli else 'markers',
-                            name='Ciclo diritto (da minimo)',
-                            text=(pd.to_datetime(_pivot_bassi_cicli['time']).dt.strftime('%d/%m')
-                                  + '<br>' + _pivot_bassi_cicli['valore'].round().astype(int).astype(str)),
-                            textposition='bottom center',
-                            textfont=dict(color='#38bdf8', size=10),
+                            mode='markers', name='Ciclo diritto (da minimo)',
                             marker=dict(color='#38bdf8', size=13, symbol='triangle-up'),
                             hovertemplate='%{x}<br>Minimo confermato: %{y:,.2f}<extra></extra>'
                         ))
                     _fig_cicli.update_layout(
                         template='plotly_dark', height=650, margin=dict(l=10, r=10, t=30, b=10),
-                        xaxis_rangeslider_visible=False,
-                        # 'closest' invece di 'x unified': stesso motivo gia' risolto nel tab Treno (marker
-                        # sparsi + candele dense possono far "saltare" l'hover su alcune barre).
-                        hovermode='closest',
+                        xaxis_rangeslider_visible=False, hovermode='x unified',
                         legend=dict(orientation='h', yanchor='bottom', y=1.02)
                     )
                     st.plotly_chart(_fig_cicli, width="stretch", key="cicli_chart")
