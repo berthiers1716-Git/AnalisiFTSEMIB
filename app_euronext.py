@@ -10,6 +10,31 @@
 # Black-Scholes dal prezzo "Settle" di ciascuna opzione (euronext_module.py).
 # Sono quindi stime di modello, non dati di mercato osservati.
 #
+# Ultima modifica: 2026-09-17 - v3.1.1
+# - Corretto il salto di 1-2 barre nell'hover del grafico Treno, segnalato con
+#   settlement o pornociclo attivi: hovermode='x unified' con trace sparse
+#   (settlement, pivot pornociclo) mescolate a una densa (una candela a
+#   settimana) puo' "catturare" l'hover sul punto sparso piu' vicino invece
+#   che sulla candela sotto il cursore. Cambiato a 'closest', solo per questo
+#   grafico. Uniformato anche il dtype delle date dei pivot pornociclo
+#   (Timestamp invece di date "nudi") e il rombo di conferma ora usa
+#   l'High/Low reale della barra di conferma, non piu' il valore del pivot
+#   originale.
+#
+# Ultima modifica: 2026-09-17 - v3.1
+# - Aggiunto il rilevatore oggettivo del "Metodo Treno" (pornociclo/69) nel tab
+#   Treno, timeframe Weekly: identifica automaticamente i pivot A/B/C
+#   masculo/fimmina (nuovo modulo pornociclo_lab.py), con tabella persistente
+#   correggibile a mano per i rari casi ambigui, e overlay sul grafico
+#   esistente (marker pieno = confermato, cerchio vuoto = candidato ancora
+#   aperto, rombo giallo = barra di conferma). Validato contro un grafico
+#   reale annotato a mano: entrambi i punti verificabili (27/03 e 10/07/2026,
+#   incluse le date di conferma) combaciano esattamente. La regola
+#   dell'eccezione delle 4 barre esiste nel modulo ma resta disattivata
+#   (usa_eccezione=False di default): una prima verifica ha mostrato che la
+#   lettura del trigger sballa una conferma già validata - da ricalibrare
+#   quando si presenterà un altro caso reale da confrontare.
+#
 # Ultima modifica: 2026-09-16 - v3.0
 # Versione "punto di fork": da qui AnalisiOpzioniFTSEMIB prosegue con piccoli
 # miglioramenti mirati alle opzioni, mentre AnalisiFTSEMIB (nuovo repository,
@@ -78,7 +103,7 @@
 #   aggiornare ad ogni release, insieme a questo changelog.
 # -----------------------------------------------------------------------------
 
-APP_VERSION = "3.0"
+APP_VERSION = "3.1.1"
 
 import streamlit as st
 import pandas as pd
@@ -98,6 +123,9 @@ from euronext_module import (
 )
 from euronext_live_module import (
     crea_sessione, fetch_live_html_batched, parse_live_html, fetch_scadenze_disponibili
+)
+from pornociclo_lab import (
+    resample_weekly as pc_resample_weekly, rileva_pivot_pornociclo, genera_etichette
 )
 from documentazione_module import (
     impacchetta_html, elenca_markdown, elenca_pdf, elenca_html_pronti, elenca_html_sorgenti
@@ -489,6 +517,7 @@ DATI_FOLDER_DEFAULT = "dati"
 TOTALI_LOG_PATH = "dati_locali/storico_totali.csv"
 STATS_LOG_PATH = "dati_locali/storico_stats.csv"
 TRENO_UFFICIALE_PATH = "dati_locali/treno_settlement_ufficiale.csv"
+PORNOCICLO_CORREZIONI_PATH = "dati_locali/pornociclo_correzioni.csv"
 DOC_MD_FOLDER = "documentazione/md"
 DOC_HTML_SRC_FOLDER = "documentazione/html_sorgente"
 DOC_HTML_READY_FOLDER = "documentazione/html_pronto"
@@ -2011,6 +2040,7 @@ secondo il metodo di Treno — oscillazione standard e oscillazione inversa (il 
                                 else:
                                     st.dataframe(_tab_durata_bassi, width="stretch", hide_index=True)
 
+                    _df_pivot_pc_vis = pd.DataFrame()
                     if _tf_treno == "Weekly":
                         _df_bars_treno = (
                             _df_prezzi_treno_filtrato.set_index('time')
@@ -2019,6 +2049,102 @@ secondo il metodo di Treno — oscillazione standard e oscillazione inversa (il 
                             .dropna()
                             .reset_index()
                         )
+
+                        st.markdown("**🎯 Pornociclo (rilevamento oggettivo) — sperimentale**")
+                        _mostra_pornociclo = st.checkbox(
+                            "Mostra i pivot A/B/C masc./fimmina rilevati automaticamente",
+                            value=False, key="treno_mostra_pornociclo"
+                        )
+                        if _mostra_pornociclo:
+                            st.caption(
+                                "Regola: un candidato (massimo o minimo) è confermato quando, dopo almeno 9 "
+                                "barre settimanali dal pivot precedente, si sono manifestate 3 barre (anche non "
+                                "consecutive, anche inside) con l'estremo opposto via via più spinto — minimi "
+                                "decrescenti per confermare un massimo, massimi crescenti per un minimo. "
+                                "Calcolato sull'intera storia disponibile (non solo sul periodo filtrato qui "
+                                "sopra), per non perdere il conteggio ai bordi del filtro. Un pivot confermato "
+                                "non viene mai più spostato — solo l'ultimo, se ancora aperto, può aggiornarsi. "
+                                "L'eccezione delle 4 barre non è ancora attiva (vedi nota nel codice)."
+                            )
+
+                            _df_settimanale_completo = pc_resample_weekly(
+                                _df_prezzi_treno[['time', 'open', 'high', 'low', 'close']]
+                            )
+                            if len(_df_settimanale_completo) < 10:
+                                st.warning("Servono almeno una decina di barre settimanali per innescare il rilevamento.")
+                                _df_pivot_pc = pd.DataFrame()
+                            else:
+                                _finestra_seed = _df_settimanale_completo.iloc[:10]
+                                _idx_max_seed = _finestra_seed['high'].idxmax()
+                                _idx_min_seed = _finestra_seed['low'].idxmin()
+                                _seed_idx, _seed_tipo = (
+                                    (_idx_max_seed, 'massimo') if _idx_max_seed < _idx_min_seed
+                                    else (_idx_min_seed, 'minimo')
+                                )
+                                _pivots_pc = rileva_pivot_pornociclo(
+                                    _df_settimanale_completo, primo_idx=_seed_idx, primo_tipo=_seed_tipo,
+                                    usa_eccezione=False
+                                )
+                                _etichette_pc = genera_etichette(_pivots_pc)
+                                _df_pivot_pc = pd.DataFrame([{
+                                    'Data': p['time'].date(), 'Tipo': p['tipo'], 'Etichetta': et,
+                                    'Valore': round(p['valore']),
+                                    'Conferma': p['time_conferma'].date() if p['time_conferma'] is not None else None,
+                                    'Distanza_barre': p['distanza_barre'],
+                                } for p, et in zip(_pivots_pc, _etichette_pc)])
+                                # Il primo pivot e' solo l'innesco arbitrario, non ha significato metodologico
+                                if len(_df_pivot_pc) > 0:
+                                    _df_pivot_pc.loc[0, 'Etichetta'] = '(innesco)'
+
+                            # Correzioni manuali persistenti: per i rari casi ambigui (secondo l'utente, ~1
+                            # ogni 50 sequenze) si puo' correggere qui senza perdere il resto - stesso schema
+                            # gia' usato per il Settlement ufficiale in questa stessa sezione.
+                            if not _df_pivot_pc.empty:
+                                if os.path.exists(PORNOCICLO_CORREZIONI_PATH):
+                                    _df_correzioni_pc = pd.read_csv(PORNOCICLO_CORREZIONI_PATH, parse_dates=['Data'])
+                                    _df_correzioni_pc['Data'] = _df_correzioni_pc['Data'].dt.date
+                                    _df_pivot_pc = _df_pivot_pc.merge(
+                                        _df_correzioni_pc[['Data', 'Etichetta']].rename(columns={'Etichetta': 'Etichetta_corretta'}),
+                                        on='Data', how='left'
+                                    )
+                                    _df_pivot_pc['Etichetta'] = _df_pivot_pc['Etichetta_corretta'].fillna(_df_pivot_pc['Etichetta'])
+                                    _df_pivot_pc = _df_pivot_pc.drop(columns='Etichetta_corretta')
+
+                                st.caption(
+                                    "Per correggere un'etichetta ambigua, modifica la colonna 'Etichetta' qui "
+                                    "sotto e premi 'Salva correzioni' — resta memorizzata anche ricaricando la pagina."
+                                )
+                                _df_pivot_pc_edit = st.data_editor(
+                                    _df_pivot_pc, hide_index=True, width="stretch", key="editor_pornociclo",
+                                    disabled=['Data', 'Tipo', 'Valore', 'Conferma', 'Distanza_barre']
+                                )
+                                if st.button("Salva correzioni", key="salva_correzioni_pornociclo"):
+                                    _righe_modificate = _df_pivot_pc_edit[
+                                        _df_pivot_pc_edit['Etichetta'] != _df_pivot_pc['Etichetta']
+                                    ][['Data', 'Etichetta']]
+                                    if not _righe_modificate.empty:
+                                        os.makedirs(os.path.dirname(PORNOCICLO_CORREZIONI_PATH), exist_ok=True)
+                                        _esistenti_pc = (
+                                            pd.read_csv(PORNOCICLO_CORREZIONI_PATH, parse_dates=['Data'])
+                                            if os.path.exists(PORNOCICLO_CORREZIONI_PATH) else pd.DataFrame(columns=['Data', 'Etichetta'])
+                                        )
+                                        if not _esistenti_pc.empty:
+                                            _esistenti_pc['Data'] = pd.to_datetime(_esistenti_pc['Data']).dt.date
+                                        _combinato_pc = pd.concat([_esistenti_pc, _righe_modificate], ignore_index=True)
+                                        _combinato_pc = _combinato_pc.drop_duplicates(subset='Data', keep='last')
+                                        _combinato_pc.to_csv(PORNOCICLO_CORREZIONI_PATH, index=False)
+                                        st.success(f"{len(_righe_modificate)} correzione/i salvata/e.")
+                                        st.rerun()
+                                    else:
+                                        st.info("Nessuna modifica da salvare.")
+                                _df_pivot_pc = _df_pivot_pc_edit
+
+                                # Filtro solo per la visualizzazione sul grafico (il rilevamento resta sull'intera storia)
+                                _df_pivot_pc_vis = _df_pivot_pc[
+                                    (_df_pivot_pc['Data'] >= _data_min_treno) & (_df_pivot_pc['Data'] <= _data_max_treno)
+                                ]
+                        else:
+                            _df_pivot_pc_vis = pd.DataFrame()
                     elif _tf_treno == "Monthly":
                         _df_bars_treno = (
                             _df_prezzi_treno_filtrato.set_index('time')
@@ -2143,9 +2269,68 @@ secondo il metodo di Treno — oscillazione standard e oscillazione inversa (il 
                             marker=dict(color='#38bdf8', size=13, symbol='triangle-up'),
                             hovertemplate='%{x}<br>Minimo confermato: %{y:,.2f}<extra></extra>'
                         ))
+                    if not _df_pivot_pc_vis.empty:
+                        # Per il plotting servono Timestamp, non oggetti date "nudi": _df_bars_treno['time']
+                        # (usato dalle candele) e' datetime64, e con hovermode='x unified' un mix di dtype
+                        # sullo stesso asse X puo' disallineare l'hover, facendo "saltare" alcune barre.
+                        _df_pivot_pc_vis = _df_pivot_pc_vis.copy()
+                        _df_pivot_pc_vis['Data'] = pd.to_datetime(_df_pivot_pc_vis['Data'])
+                        _df_pivot_pc_vis['Conferma'] = pd.to_datetime(_df_pivot_pc_vis['Conferma'])
+                        for _tipo_pc, _colore_pc in [('massimo', '#c084fc'), ('minimo', '#2dd4bf')]:
+                            _sub_pc = _df_pivot_pc_vis[_df_pivot_pc_vis['Tipo'] == _tipo_pc]
+                            if _sub_pc.empty:
+                                continue
+                            _confermati_pc = _sub_pc[_sub_pc['Conferma'].notna()]
+                            _aperti_pc = _sub_pc[_sub_pc['Conferma'].isna()]
+                            if not _confermati_pc.empty:
+                                _fig_treno.add_trace(go.Scatter(
+                                    x=_confermati_pc['Data'], y=_confermati_pc['Valore'],
+                                    mode='markers+text', name=f'Pornociclo — {_tipo_pc} confermato',
+                                    text=_confermati_pc['Etichetta'],
+                                    textposition='top center' if _tipo_pc == 'massimo' else 'bottom center',
+                                    textfont=dict(color=_colore_pc, size=11),
+                                    marker=dict(color=_colore_pc, size=12, symbol='circle',
+                                                line=dict(color='white', width=1)),
+                                    hovertemplate='%{text}<br>%{x}<br>Valore: %{y:,.0f}<extra></extra>'
+                                ))
+                            if not _aperti_pc.empty:
+                                _fig_treno.add_trace(go.Scatter(
+                                    x=_aperti_pc['Data'], y=_aperti_pc['Valore'],
+                                    mode='markers+text', name=f'Pornociclo — {_tipo_pc} candidato (aperto)',
+                                    text=_aperti_pc['Etichetta'],
+                                    textposition='top center' if _tipo_pc == 'massimo' else 'bottom center',
+                                    textfont=dict(color=_colore_pc, size=11),
+                                    marker=dict(color=_colore_pc, size=12, symbol='circle-open',
+                                                line=dict(width=2)),
+                                    hovertemplate='%{text} (ancora aperto)<br>%{x}<br>Valore: %{y:,.0f}<extra></extra>'
+                                ))
+                        _confermati_con_data_pc = _df_pivot_pc_vis[_df_pivot_pc_vis['Conferma'].notna()]
+                        if not _confermati_con_data_pc.empty:
+                            _lookup_barre_pc = _df_bars_treno.set_index('time')[['high', 'low']]
+                            _confermati_con_data_pc = _confermati_con_data_pc.merge(
+                                _lookup_barre_pc, left_on='Conferma', right_index=True, how='left'
+                            )
+                            _confermati_con_data_pc['y_conferma'] = np.where(
+                                _confermati_con_data_pc['Tipo'] == 'massimo',
+                                _confermati_con_data_pc['high'], _confermati_con_data_pc['low']
+                            )
+                            _confermati_con_data_pc['y_conferma'] = (
+                                _confermati_con_data_pc['y_conferma'].fillna(_confermati_con_data_pc['Valore'])
+                            )
+                            _fig_treno.add_trace(go.Scatter(
+                                x=_confermati_con_data_pc['Conferma'], y=_confermati_con_data_pc['y_conferma'],
+                                mode='markers', name='Barra di conferma',
+                                marker=dict(color='#facc15', size=9, symbol='diamond'),
+                                hovertemplate='Conferma: %{x}<extra></extra>'
+                            ))
                     _fig_treno.update_layout(
                         template='plotly_dark', height=650, margin=dict(l=10, r=10, t=30, b=10),
-                        xaxis_rangeslider_visible=False, hovermode='x unified',
+                        xaxis_rangeslider_visible=False,
+                        # 'closest' invece di 'x unified': con trace sparse (settlement, pornociclo) insieme
+                        # alle candele (una per settimana), 'x unified' a volte "cattura" l'hover sul punto
+                        # sparso piu' vicino invece che sulla candela sotto il cursore, facendo sembrare che
+                        # alcune barre settimanali siano "saltate" - segnalato dall'utente il 17/09/2026.
+                        hovermode='closest',
                         legend=dict(orientation='h', yanchor='bottom', y=1.02)
                     )
                     st.plotly_chart(_fig_treno, width="stretch", key="treno_chart")
