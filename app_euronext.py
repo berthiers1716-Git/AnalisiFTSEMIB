@@ -10,6 +10,18 @@
 # Black-Scholes dal prezzo "Settle" di ciascuna opzione (euronext_module.py).
 # Sono quindi stime di modello, non dati di mercato osservati.
 #
+# Ultima modifica: 2026-09-20 - v3.5
+# - Tab Cicli: le due tabelle di convalida ora ordinate per data decrescente
+#   (più recenti in cima), e "Cicli diritti" mostrata prima di "Cicli
+#   inversi" (era il contrario).
+# - Nuova tabella "🔮 Cicli previsti / in corso (a mano)", sopra le due
+#   automatiche: righe completamente libere (aggiungibili/eliminabili con
+#   num_rows="dynamic"), con colonne Da/A/Tipo/Ordine/Nota - per etichettare
+#   un ciclo ancora aperto (A vuoto) o uno previsto ma non ancora confermato
+#   dal rilevatore (es. i 2 nuovi T+2 attesi secondo Elico). Salvata su file
+#   persistente separato (cicli_previsti.csv), non si mescola con la
+#   convalida dei cicli auto-rilevati.
+#
 # Ultima modifica: 2026-09-20 - v3.4
 # - Tab Cicli, punti manuali: aggiunta la colonna "Ordine" (T+2/T+1/T/T-1),
 #   distinta da "Tipo" (diretto/inverso), sia nel modulo di inserimento che
@@ -136,7 +148,7 @@
 #   aggiornare ad ogni release, insieme a questo changelog.
 # -----------------------------------------------------------------------------
 
-APP_VERSION = "3.4"
+APP_VERSION = "3.5"
 
 import streamlit as st
 import pandas as pd
@@ -556,6 +568,7 @@ DOC_HTML_SRC_FOLDER = "documentazione/html_sorgente"
 DOC_HTML_READY_FOLDER = "documentazione/html_pronto"
 DOC_PDF_FOLDER = "static/pdf"
 CICLI_CONVALIDA_PATH = "dati_locali/cicli_convalida.csv"
+CICLI_PREVISTI_PATH = "dati_locali/cicli_previsti.csv"
 CICLI_MANUALI_PATH = "dati_locali/cicli_manuali.csv"
 
 if df_raw is not None and spot_price > 0:
@@ -2819,6 +2832,7 @@ valutazione resta salvata anche cambiando filtro periodo.
                         )
                         if _classificato.empty:
                             return _classificato
+                        _classificato = _classificato.sort_values('A', ascending=False).reset_index(drop=True)
                         if _df_convalida_cicli.empty:
                             _classificato['Convalida'] = ''
                             _classificato['Nota'] = ''
@@ -2841,19 +2855,42 @@ valutazione resta salvata anche cambiando filtro periodo.
                     }
                     _colonne_disabilitate_cicli = ['Da', 'A', 'Barre', 'Classificazione']
 
-                    _edit_alti_cicli = pd.DataFrame()
-                    with st.expander("📏 Cicli inversi rilevati (da massimi) — convalida", expanded=True):
-                        if not _mostra_ciclo_inverso_cicli:
-                            st.caption("Attiva 'Cicli inversi (da massimi)' sopra per vedere questa tabella.")
-                        else:
-                            _tab_alti_cicli = _tabella_con_convalida_cicli(_pivot_alti_full_cicli, 'inverso')
-                            if _tab_alti_cicli.empty:
-                                st.caption("Nessun ciclo completo nel periodo mostrato.")
-                            else:
-                                _edit_alti_cicli = st.data_editor(
-                                    _tab_alti_cicli, width="stretch", hide_index=True, key="cicli_edit_alti",
-                                    disabled=_colonne_disabilitate_cicli, column_config=_config_convalida_cicli
-                                )
+                    with st.expander("🔮 Cicli previsti / in corso (a mano)", expanded=True):
+                        st.caption(
+                            "Per etichettare un ciclo ancora in corso (nessun 'A' definitivo) o uno previsto "
+                            "ma non ancora confermato dal rilevatore automatico (es. i 2 nuovi T+2, diretto e "
+                            "inverso, attesi secondo Elico) - lascia 'A' vuoto se non ancora concluso. "
+                            "Aggiungi righe con il pulsante '+' della tabella."
+                        )
+                        _COLS_PREVISTI_CICLI = ['Da', 'A', 'Tipo', 'Ordine', 'Nota']
+                        _df_previsti_cicli = (
+                            pd.read_csv(CICLI_PREVISTI_PATH, parse_dates=['Da', 'A'])
+                            if os.path.exists(CICLI_PREVISTI_PATH) else pd.DataFrame(columns=_COLS_PREVISTI_CICLI)
+                        )
+                        for _col_data_prev in ['Da', 'A']:
+                            if _col_data_prev in _df_previsti_cicli.columns:
+                                _df_previsti_cicli[_col_data_prev] = pd.to_datetime(
+                                    _df_previsti_cicli[_col_data_prev], errors='coerce'
+                                ).dt.date
+                        if not _df_previsti_cicli.empty:
+                            _df_previsti_cicli = _df_previsti_cicli.sort_values('Da', ascending=False).reset_index(drop=True)
+                        _df_previsti_edit = st.data_editor(
+                            _df_previsti_cicli[_COLS_PREVISTI_CICLI], num_rows="dynamic", hide_index=True,
+                            width="stretch", key="editor_cicli_previsti",
+                            column_config={
+                                'Tipo': st.column_config.SelectboxColumn(
+                                    "Tipo", options=["diretto (minimo)", "inverso (massimo)"]
+                                ),
+                                'Ordine': st.column_config.SelectboxColumn(
+                                    "Ordine", options=["T+2", "T+1", "T", "T-1"]
+                                ),
+                            }
+                        )
+                        if st.button("💾 Salva cicli previsti/in corso", key="salva_cicli_previsti"):
+                            os.makedirs(os.path.dirname(CICLI_PREVISTI_PATH), exist_ok=True)
+                            _df_previsti_edit.to_csv(CICLI_PREVISTI_PATH, index=False)
+                            st.success(f"Salvate {len(_df_previsti_edit)} righe.")
+                            st.rerun()
 
                     _edit_bassi_cicli = pd.DataFrame()
                     with st.expander("📏 Cicli diritti rilevati (da minimi) — convalida", expanded=True):
@@ -2866,6 +2903,20 @@ valutazione resta salvata anche cambiando filtro periodo.
                             else:
                                 _edit_bassi_cicli = st.data_editor(
                                     _tab_bassi_cicli, width="stretch", hide_index=True, key="cicli_edit_bassi",
+                                    disabled=_colonne_disabilitate_cicli, column_config=_config_convalida_cicli
+                                )
+
+                    _edit_alti_cicli = pd.DataFrame()
+                    with st.expander("📏 Cicli inversi rilevati (da massimi) — convalida", expanded=True):
+                        if not _mostra_ciclo_inverso_cicli:
+                            st.caption("Attiva 'Cicli inversi (da massimi)' sopra per vedere questa tabella.")
+                        else:
+                            _tab_alti_cicli = _tabella_con_convalida_cicli(_pivot_alti_full_cicli, 'inverso')
+                            if _tab_alti_cicli.empty:
+                                st.caption("Nessun ciclo completo nel periodo mostrato.")
+                            else:
+                                _edit_alti_cicli = st.data_editor(
+                                    _tab_alti_cicli, width="stretch", hide_index=True, key="cicli_edit_alti",
                                     disabled=_colonne_disabilitate_cicli, column_config=_config_convalida_cicli
                                 )
 

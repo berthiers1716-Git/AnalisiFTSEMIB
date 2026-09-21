@@ -10,6 +10,28 @@
 # Black-Scholes dal prezzo "Settle" di ciascuna opzione (euronext_module.py).
 # Sono quindi stime di modello, non dati di mercato osservati.
 #
+# Ultima modifica: 2026-09-20 - v3.4
+# - Tab Cicli, punti manuali: aggiunta la colonna "Ordine" (T+2/T+1/T/T-1),
+#   distinta da "Tipo" (diretto/inverso), sia nel modulo di inserimento che
+#   nella tabella (SelectboxColumn). Retrocompatibile con file salvati prima
+#   di questa colonna (aggiunta con default 'T+2' al volo).
+# - Corretta la sovrapposizione delle etichette quando due punti manuali sono
+#   vicini nel tempo (es. 9 e 11 settembre): la posizione del testo ora si
+#   alterna tra 4 angoli (alto/basso, destra/sinistra) invece di restare
+#   sempre "a destra" per tutti i punti.
+#
+# Ultima modifica: 2026-09-20 - v3.3
+# - Tab Cicli: le etichette sui pivot mostrano ora anche le barre trascorse
+#   dal precedente pivot DELLO STESSO TIPO (diretto con diretto, inverso con
+#   inverso), in cima all'etichetta, sopra data e valore - utile per
+#   confrontare a colpo d'occhio la durata reale di un ciclo con il nominale
+#   T+2 (32 barre)/T+3 (64 barre) del metodo di Elico.
+# - Nuovo expander "➕ Aggiungi uno start di ciclo a mano": per marcare un
+#   punto di partenza alternativo (es. testare sia il 9 che il 15 settembre
+#   come possibile inizio di un nuovo T+2 diretto), salvato su file
+#   persistente e disegnato con una stella dorata distinta dai pivot
+#   automatici. Tabella eliminabile riga per riga (num_rows="dynamic").
+#
 # Ultima modifica: 2026-09-20 - v3.2
 # - Tab Cicli: aggiunte etichette data/valore direttamente sui pivot rilevati
 #   (non solo hover), con interruttore per disattivarle se il grafico diventa
@@ -114,7 +136,7 @@
 #   aggiornare ad ogni release, insieme a questo changelog.
 # -----------------------------------------------------------------------------
 
-APP_VERSION = "3.2"
+APP_VERSION = "3.4"
 
 import streamlit as st
 import pandas as pd
@@ -534,6 +556,7 @@ DOC_HTML_SRC_FOLDER = "documentazione/html_sorgente"
 DOC_HTML_READY_FOLDER = "documentazione/html_pronto"
 DOC_PDF_FOLDER = "static/pdf"
 CICLI_CONVALIDA_PATH = "dati_locali/cicli_convalida.csv"
+CICLI_MANUALI_PATH = "dati_locali/cicli_manuali.csv"
 
 if df_raw is not None and spot_price > 0:
     log_totali_giornalieri(df_raw, analysis_date, TOTALI_LOG_PATH, spot=spot_price)
@@ -2574,6 +2597,80 @@ valutazione resta salvata anche cambiando filtro periodo.
 
                     _data_min_cicli = _df_prezzi_cicli_filtrato['time'].min().date()
                     _data_max_cicli = _df_prezzi_cicli_filtrato['time'].max().date()
+
+                    with st.expander("➕ Aggiungi uno start di ciclo a mano", expanded=False):
+                        st.caption(
+                            "Per testare un'ipotesi diversa da quella rilevata in automatico, o per "
+                            "etichettare cicli di ordine più fine (T+1/T/T-1) che il rilevatore automatico "
+                            "non segue: il punto compare sul grafico con una stella dorata, distinta dai "
+                            "pivot automatici."
+                        )
+                        col_man1, col_man2, col_man3, col_man4 = st.columns([1, 1, 1, 2])
+                        with col_man1:
+                            _data_manuale_cicli = st.date_input(
+                                "Data", value=_data_max_cicli, min_value=_data_min_cicli,
+                                max_value=_data_max_cicli, key="cicli_data_manuale"
+                            )
+                        with col_man2:
+                            _tipo_manuale_cicli = st.radio(
+                                "Tipo", ["diretto (minimo)", "inverso (massimo)"], key="cicli_tipo_manuale"
+                            )
+                        with col_man3:
+                            _ordine_manuale_cicli = st.selectbox(
+                                "Ordine", ["T+2", "T+1", "T", "T-1"], index=0, key="cicli_ordine_manuale"
+                            )
+                        with col_man4:
+                            _nota_manuale_cicli = st.text_input("Nota (opzionale)", key="cicli_nota_manuale")
+
+                        if st.button("Aggiungi punto manuale", key="cicli_aggiungi_manuale"):
+                            os.makedirs(os.path.dirname(CICLI_MANUALI_PATH), exist_ok=True)
+                            _esistenti_man = (
+                                pd.read_csv(CICLI_MANUALI_PATH, parse_dates=['Data'])
+                                if os.path.exists(CICLI_MANUALI_PATH)
+                                else pd.DataFrame(columns=['Data', 'Tipo', 'Ordine', 'Nota'])
+                            )
+                            if 'Ordine' not in _esistenti_man.columns:  # file salvato prima di questa colonna
+                                _esistenti_man['Ordine'] = 'T+2'
+                            _nuova_riga_man = pd.DataFrame([{
+                                'Data': pd.Timestamp(_data_manuale_cicli), 'Tipo': _tipo_manuale_cicli,
+                                'Ordine': _ordine_manuale_cicli, 'Nota': _nota_manuale_cicli
+                            }])
+                            _combinato_man = pd.concat([_esistenti_man, _nuova_riga_man], ignore_index=True)
+                            _combinato_man.to_csv(CICLI_MANUALI_PATH, index=False)
+                            st.success(
+                                f"Punto manuale aggiunto: {_ordine_manuale_cicli} {_tipo_manuale_cicli} il "
+                                f"{_data_manuale_cicli.strftime('%d/%m/%Y')}."
+                            )
+                            st.rerun()
+
+                        _df_manuali_cicli = (
+                            pd.read_csv(CICLI_MANUALI_PATH, parse_dates=['Data'])
+                            if os.path.exists(CICLI_MANUALI_PATH)
+                            else pd.DataFrame(columns=['Data', 'Tipo', 'Ordine', 'Nota'])
+                        )
+                        if 'Ordine' not in _df_manuali_cicli.columns:  # file salvato prima di questa colonna
+                            _df_manuali_cicli['Ordine'] = 'T+2'
+                        if not _df_manuali_cicli.empty:
+                            st.caption("Punti manuali salvati — per eliminarne uno usa il cestino nella riga, poi salva:")
+                            _df_manuali_edit = st.data_editor(
+                                _df_manuali_cicli[['Data', 'Tipo', 'Ordine', 'Nota']], num_rows="dynamic",
+                                hide_index=True, width="stretch", key="editor_cicli_manuali",
+                                column_config={
+                                    'Tipo': st.column_config.SelectboxColumn(
+                                        "Tipo", options=["diretto (minimo)", "inverso (massimo)"]
+                                    ),
+                                    'Ordine': st.column_config.SelectboxColumn(
+                                        "Ordine", options=["T+2", "T+1", "T", "T-1"]
+                                    ),
+                                }
+                            )
+                            if st.button("Salva modifiche ai punti manuali", key="salva_cicli_manuali"):
+                                _df_manuali_edit.to_csv(CICLI_MANUALI_PATH, index=False)
+                                st.success("Salvato.")
+                                st.rerun()
+                            _df_manuali_cicli = _df_manuali_edit
+                            _df_manuali_cicli = _df_manuali_edit
+
                     _df_barre_vista_cicli = _df_barre_completo_cicli[
                         (_df_barre_completo_cicli['time'].dt.date >= _data_min_cicli) &
                         (_df_barre_completo_cicli['time'].dt.date <= _data_max_cicli)
@@ -2582,8 +2679,18 @@ valutazione resta salvata anche cambiando filtro periodo.
                     _pivot_alti_full_cicli, _pivot_bassi_full_cicli = rileva_pivot_alternati(
                         _df_barre_completo_cicli, _finestra_conferma_cicli
                     )
-                    _pivot_alti_cicli = pd.DataFrame(columns=['idx', 'time', 'valore'])
-                    _pivot_bassi_cicli = pd.DataFrame(columns=['idx', 'time', 'valore'])
+                    # Barre trascorse dal precedente pivot DELLO STESSO TIPO (diretto con diretto, inverso
+                    # con inverso - non nella sequenza alternata mista) - calcolato sull'intera serie prima
+                    # del filtro periodo, cosi' il primo punto visibile non perde il conteggio.
+                    if not _pivot_alti_full_cicli.empty:
+                        _pivot_alti_full_cicli = _pivot_alti_full_cicli.copy()
+                        _pivot_alti_full_cicli['barre_da_precedente'] = _pivot_alti_full_cicli['idx'].diff()
+                    if not _pivot_bassi_full_cicli.empty:
+                        _pivot_bassi_full_cicli = _pivot_bassi_full_cicli.copy()
+                        _pivot_bassi_full_cicli['barre_da_precedente'] = _pivot_bassi_full_cicli['idx'].diff()
+
+                    _pivot_alti_cicli = pd.DataFrame(columns=['idx', 'time', 'valore', 'barre_da_precedente'])
+                    _pivot_bassi_cicli = pd.DataFrame(columns=['idx', 'time', 'valore', 'barre_da_precedente'])
                     if _mostra_ciclo_inverso_cicli and not _pivot_alti_full_cicli.empty:
                         _pivot_alti_cicli = _pivot_alti_full_cicli[
                             (pd.to_datetime(_pivot_alti_full_cicli['time']).dt.date >= _data_min_cicli) &
@@ -2616,11 +2723,14 @@ valutazione resta salvata anche cambiando filtro periodo.
                         hovertemplate='%{x}<br>SMA20: %{y:,.2f}<extra></extra>'
                     ))
                     if not _pivot_alti_cicli.empty:
+                        _barre_txt_alti = _pivot_alti_cicli['barre_da_precedente'].apply(
+                            lambda v: f"{int(v)}b<br>" if pd.notna(v) else ""
+                        )
                         _fig_cicli.add_trace(go.Scatter(
                             x=_pivot_alti_cicli['time'], y=_pivot_alti_cicli['valore'],
                             mode='markers+text' if _mostra_etichette_cicli else 'markers',
                             name='Ciclo inverso (da massimo)',
-                            text=(pd.to_datetime(_pivot_alti_cicli['time']).dt.strftime('%d/%m')
+                            text=(_barre_txt_alti + pd.to_datetime(_pivot_alti_cicli['time']).dt.strftime('%d/%m')
                                   + '<br>' + _pivot_alti_cicli['valore'].round().astype(int).astype(str)),
                             textposition='top center',
                             textfont=dict(color='#c084fc', size=10),
@@ -2628,16 +2738,55 @@ valutazione resta salvata anche cambiando filtro periodo.
                             hovertemplate='%{x}<br>Massimo confermato: %{y:,.2f}<extra></extra>'
                         ))
                     if not _pivot_bassi_cicli.empty:
+                        _barre_txt_bassi = _pivot_bassi_cicli['barre_da_precedente'].apply(
+                            lambda v: f"{int(v)}b<br>" if pd.notna(v) else ""
+                        )
                         _fig_cicli.add_trace(go.Scatter(
                             x=_pivot_bassi_cicli['time'], y=_pivot_bassi_cicli['valore'],
                             mode='markers+text' if _mostra_etichette_cicli else 'markers',
                             name='Ciclo diritto (da minimo)',
-                            text=(pd.to_datetime(_pivot_bassi_cicli['time']).dt.strftime('%d/%m')
+                            text=(_barre_txt_bassi + pd.to_datetime(_pivot_bassi_cicli['time']).dt.strftime('%d/%m')
                                   + '<br>' + _pivot_bassi_cicli['valore'].round().astype(int).astype(str)),
                             textposition='bottom center',
                             textfont=dict(color='#38bdf8', size=10),
                             marker=dict(color='#38bdf8', size=13, symbol='triangle-up'),
                             hovertemplate='%{x}<br>Minimo confermato: %{y:,.2f}<extra></extra>'
+                        ))
+
+                    _df_manuali_vis_cicli = pd.DataFrame(columns=['Data', 'Tipo', 'Ordine', 'Nota'])
+                    if not _df_manuali_cicli.empty:
+                        _df_manuali_vis_cicli = _df_manuali_cicli[
+                            (_df_manuali_cicli['Data'].dt.date >= _data_min_cicli) &
+                            (_df_manuali_cicli['Data'].dt.date <= _data_max_cicli)
+                        ].copy().sort_values('Data').reset_index(drop=True)
+                    if not _df_manuali_vis_cicli.empty:
+                        _lookup_manuali_cicli = _df_barre_completo_cicli.set_index('time')[['high', 'low']]
+                        _df_manuali_vis_cicli = _df_manuali_vis_cicli.merge(
+                            _lookup_manuali_cicli, left_on='Data', right_index=True, how='left'
+                        )
+                        _df_manuali_vis_cicli['valore'] = np.where(
+                            _df_manuali_vis_cicli['Tipo'].str.startswith('inverso'),
+                            _df_manuali_vis_cicli['high'], _df_manuali_vis_cicli['low']
+                        )
+                        # Posizione del testo alternata tra punti consecutivi (per data), cosi' due stelle
+                        # vicine nel tempo (es. a pochi giorni) non si sovrappongono in etichetta.
+                        _posizioni_alternate = ['top right', 'bottom right', 'top left', 'bottom left']
+                        _testposition_manuali = [
+                            _posizioni_alternate[i % len(_posizioni_alternate)]
+                            for i in range(len(_df_manuali_vis_cicli))
+                        ]
+                        _fig_cicli.add_trace(go.Scatter(
+                            x=_df_manuali_vis_cicli['Data'], y=_df_manuali_vis_cicli['valore'],
+                            mode='markers+text' if _mostra_etichette_cicli else 'markers',
+                            name='Punto manuale',
+                            text=(_df_manuali_vis_cicli['Ordine'] + '<br>'
+                                  + pd.to_datetime(_df_manuali_vis_cicli['Data']).dt.strftime('%d/%m') + '<br>'
+                                  + _df_manuali_vis_cicli['valore'].round().astype('Int64').astype(str)),
+                            textposition=_testposition_manuali,
+                            textfont=dict(color='#facc15', size=10),
+                            marker=dict(color='#facc15', size=15, symbol='star', line=dict(color='white', width=1)),
+                            customdata=_df_manuali_vis_cicli['Tipo'],
+                            hovertemplate='%{text}<br>Tipo: %{customdata}<extra></extra>'
                         ))
                     _fig_cicli.update_layout(
                         template='plotly_dark', height=650, margin=dict(l=10, r=10, t=30, b=10),

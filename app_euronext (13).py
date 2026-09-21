@@ -9,7 +9,152 @@
 # Euronext non fornisce Delta/Gamma/IV pronti. Vengono derivati qui invertendo
 # Black-Scholes dal prezzo "Settle" di ciascuna opzione (euronext_module.py).
 # Sono quindi stime di modello, non dati di mercato osservati.
+#
+# Ultima modifica: 2026-09-21 - v3.5.1
+# - Corretto il posizionamento delle etichette dei punti manuali: ora usa la
+#   stessa convenzione dei pivot automatici (sopra-centrato per inverso,
+#   sotto-centrato per diretto) invece di alternare tra 4 angoli - segnalato
+#   come inconsistente rispetto allo stile dei triangoli automatici.
+#
+# Ultima modifica: 2026-09-20 - v3.5
+# - Tab Cicli: le due tabelle di convalida ora ordinate per data decrescente
+#   (più recenti in cima), e "Cicli diritti" mostrata prima di "Cicli
+#   inversi" (era il contrario).
+# - Nuova tabella "🔮 Cicli previsti / in corso (a mano)", sopra le due
+#   automatiche: righe completamente libere (aggiungibili/eliminabili con
+#   num_rows="dynamic"), con colonne Da/A/Tipo/Ordine/Nota - per etichettare
+#   un ciclo ancora aperto (A vuoto) o uno previsto ma non ancora confermato
+#   dal rilevatore (es. i 2 nuovi T+2 attesi secondo Elico). Salvata su file
+#   persistente separato (cicli_previsti.csv), non si mescola con la
+#   convalida dei cicli auto-rilevati.
+#
+# Ultima modifica: 2026-09-20 - v3.4
+# - Tab Cicli, punti manuali: aggiunta la colonna "Ordine" (T+2/T+1/T/T-1),
+#   distinta da "Tipo" (diretto/inverso), sia nel modulo di inserimento che
+#   nella tabella (SelectboxColumn). Retrocompatibile con file salvati prima
+#   di questa colonna (aggiunta con default 'T+2' al volo).
+# - Corretta la sovrapposizione delle etichette quando due punti manuali sono
+#   vicini nel tempo (es. 9 e 11 settembre): la posizione del testo ora si
+#   alterna tra 4 angoli (alto/basso, destra/sinistra) invece di restare
+#   sempre "a destra" per tutti i punti.
+#
+# Ultima modifica: 2026-09-20 - v3.3
+# - Tab Cicli: le etichette sui pivot mostrano ora anche le barre trascorse
+#   dal precedente pivot DELLO STESSO TIPO (diretto con diretto, inverso con
+#   inverso), in cima all'etichetta, sopra data e valore - utile per
+#   confrontare a colpo d'occhio la durata reale di un ciclo con il nominale
+#   T+2 (32 barre)/T+3 (64 barre) del metodo di Elico.
+# - Nuovo expander "➕ Aggiungi uno start di ciclo a mano": per marcare un
+#   punto di partenza alternativo (es. testare sia il 9 che il 15 settembre
+#   come possibile inizio di un nuovo T+2 diretto), salvato su file
+#   persistente e disegnato con una stella dorata distinta dai pivot
+#   automatici. Tabella eliminabile riga per riga (num_rows="dynamic").
+#
+# Ultima modifica: 2026-09-20 - v3.2
+# - Tab Cicli: aggiunte etichette data/valore direttamente sui pivot rilevati
+#   (non solo hover), con interruttore per disattivarle se il grafico diventa
+#   affollato su "Tutto" lo storico. Primo passo verso un confronto più
+#   leggibile con la nomenclatura T+2 (mensile, 32 barre)/T+3 (trimestrale
+#   grosso modo, 64 barre) usata nel metodo ciclico di Elico - rilevamento
+#   automatico "a grana grossa" e mappatura manuale di T/T-1 restano da fare.
+# - Applicata preventivamente anche qui la correzione hovermode='closest'
+#   (stessa causa già risolta nel tab Treno: marker sparsi + candele dense
+#   con 'x unified' possono far "saltare" l'hover su alcune barre).
+#
+# Ultima modifica: 2026-09-17 - v3.1.1
+# - Corretto il salto di 1-2 barre nell'hover del grafico Treno, segnalato con
+#   settlement o pornociclo attivi: hovermode='x unified' con trace sparse
+#   (settlement, pivot pornociclo) mescolate a una densa (una candela a
+#   settimana) puo' "catturare" l'hover sul punto sparso piu' vicino invece
+#   che sulla candela sotto il cursore. Cambiato a 'closest', solo per questo
+#   grafico. Uniformato anche il dtype delle date dei pivot pornociclo
+#   (Timestamp invece di date "nudi") e il rombo di conferma ora usa
+#   l'High/Low reale della barra di conferma, non piu' il valore del pivot
+#   originale.
+#
+# Ultima modifica: 2026-09-17 - v3.1
+# - Aggiunto il rilevatore oggettivo del "Metodo Treno" (pornociclo/69) nel tab
+#   Treno, timeframe Weekly: identifica automaticamente i pivot A/B/C
+#   masculo/fimmina (nuovo modulo pornociclo_lab.py), con tabella persistente
+#   correggibile a mano per i rari casi ambigui, e overlay sul grafico
+#   esistente (marker pieno = confermato, cerchio vuoto = candidato ancora
+#   aperto, rombo giallo = barra di conferma). Validato contro un grafico
+#   reale annotato a mano: entrambi i punti verificabili (27/03 e 10/07/2026,
+#   incluse le date di conferma) combaciano esattamente. La regola
+#   dell'eccezione delle 4 barre esiste nel modulo ma resta disattivata
+#   (usa_eccezione=False di default): una prima verifica ha mostrato che la
+#   lettura del trigger sballa una conferma già validata - da ricalibrare
+#   quando si presenterà un altro caso reale da confrontare.
+#
+# Ultima modifica: 2026-09-16 - v3.0
+# Versione "punto di fork": da qui AnalisiOpzioniFTSEMIB prosegue con piccoli
+# miglioramenti mirati alle opzioni, mentre AnalisiFTSEMIB (nuovo repository,
+# stessa cronologia fino a qui) diventa il ramo di sviluppo più sofisticato
+# (altre analisi oltre le opzioni, es. OI future).
+#
+# Riepilogo cumulativo dei cambiamenti dalla v2.9x:
+# - Sidebar riorganizzata e più stretta: solo Spot sempre visibile, il resto
+#   (Risk-free/Dividend yield/Moltiplicatore/Soglia volume) in un expander
+#   "Parametri (Vol., Risk Free...)" con etichette di rilevanza (🔴🟡🟢) e
+#   nota su quando ha senso rivederli.
+# - Aggiunta sezione "🔗 Link utili" (Euronext opzioni/future) e tre bottoni
+#   "Vai a" (Help/Glossario, Istruzioni di scarico, Teoria) che saltano
+#   davvero al contenuto — sfruttando key/on_change su st.tabs (rilasciato da
+#   Streamlit a marzo 2026) per il salto al tab Teoria, e un flag "usa e
+#   getta" in session_state per aprire gli expander Glossario/Istruzioni
+#   (necessario perché quegli expander sono definiti PRIMA del bottone nel
+#   codice: mutare session_state di un widget già istanziato nello stesso
+#   giro fallisce, il flag letto al momento della creazione invece no).
+# - Verificato con un giro di test funzionali headless (streamlit.testing.v1.
+#   AppTest): tutti i 15 tab, sia con Spot impostato sia senza, più i tre
+#   bottoni "Vai a" - nessuna eccezione.
+#
+# Ultima modifica: 2026-09-16 - v2.99.2
+# - Rinominato l'expander "Altri parametri" -> "Parametri (Vol., Risk Free...)"
+#   per anticiparne il contenuto anche da chiuso.
+# - Nota "Link utili" in sidebar trasformata in elenco puntato (Help/Glossario,
+#   Istruzioni di scarico, Teoria). Nessun vero link cliccabile verso il tab
+#   Teoria: st.tabs non supporta un'ancora stabile per aprire un tab specifico
+#   da un altro punto della pagina, resta quindi testo informativo.
+#
+# Ultima modifica: 2026-09-16 - v2.99.1
+# - Aggiornato il default di Risk-free al nuovo tasso BCE sui depositi (2,25% ->
+#   2,50%), dopo il rialzo di 0,25 punti deciso il 10/9/2026, in vigore dal
+#   16/9/2026 - esempio pratico del perché in sidebar è segnalato come "🟡
+#   aggiornamento periodico, non giornaliero, segue le decisioni BCE".
+#
+# Ultima modifica: 2026-09-15 - v2.99
+# - Nell'expander "Altri parametri": riordinati per rilevanza ed etichettati con
+#   un colore/nota su quanto spesso ha senso rivederli - 🔴 Soglia volume (il
+#   più rilevante, in cima), 🟡 Risk-free/Dividend yield (periodico, non
+#   giornaliero: risk-free segue le decisioni BCE, dividend yield si muove
+#   lentamente nell'anno), 🟢 Moltiplicatore contratto (invariato da anni).
+#
+# Ultima modifica: 2026-09-15 - v2.98
+# - Sidebar riorganizzata: solo lo Spot (l'unico valore che cambia ogni giorno)
+#   resta sempre visibile; Risk-free/Dividend yield/Moltiplicatore/Soglia volume
+#   spostati in un expander compatto "Altri parametri" (due colonne per i primi
+#   due). Larghezza di base della sidebar ridotta via CSS (resta ridimensionabile
+#   a mano trascinando il bordo).
+# - Aggiunta sezione "🔗 Link utili" in sidebar: collegamenti diretti alle pagine
+#   Euronext (opzioni MIBO, future FIB) e rimando al Glossario/Help in cima alla
+#   pagina principale.
+#
+# Ultima modifica: 2026-09-15 - v2.97
+# - Corretta la scadenza di novembre mancante nello scarico live (SCADENZE_NOTE
+#   statica -> fetch_scadenze_disponibili(), letta dinamicamente da Euronext).
+# - Il corpo principale (tab) ora si apre col solo df_raw, non serve più anche
+#   lo spot: aggiunto il tab "Dati" (sempre disponibile) e differenziato il
+#   messaggio nei tab che richiedono Black-Scholes (spot mancante vs OI
+#   mancante), riusando il meccanismo _oi_disponibile già esistente.
+# - Numero di versione ora incorporato direttamente qui (APP_VERSION sotto),
+#   non solo in VERSION.txt esterno: così viaggia sempre insieme al codice,
+#   anche se VERSION.txt venisse dimenticato copiando solo questo file tra
+#   cartelle o macchine (stessa idea già applicata a gestore_git.py). Da
+#   aggiornare ad ogni release, insieme a questo changelog.
 # -----------------------------------------------------------------------------
+
+APP_VERSION = "3.5.1"
 
 import streamlit as st
 import pandas as pd
@@ -29,6 +174,9 @@ from euronext_module import (
 )
 from euronext_live_module import (
     crea_sessione, fetch_live_html_batched, parse_live_html, fetch_scadenze_disponibili
+)
+from pornociclo_lab import (
+    resample_weekly as pc_resample_weekly, rileva_pivot_pornociclo, genera_etichette
 )
 from documentazione_module import (
     impacchetta_html, elenca_markdown, elenca_pdf, elenca_html_pronti, elenca_html_sorgenti
@@ -58,6 +206,12 @@ st.markdown("""
         background-color: #111827; border: 1px solid #1f2937;
         border-radius: 8px; padding: 10px;
     }
+    /* v2.98: colonna sinistra più stretta di base (default Streamlit ~21rem) -
+       pochi parametri, non serve tutto quello spazio; resta comunque
+       ridimensionabile a mano trascinando il bordo. */
+    section[data-testid="stSidebar"] {
+        width: 260px !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -68,7 +222,7 @@ def _leggi_versione():
     except FileNotFoundError:
         return None
 
-_app_version = _leggi_versione()
+_app_version = APP_VERSION or _leggi_versione()
 _titolo = "📊 FTSEMIB Options Analyzer (Euronext)"
 if _app_version:
     _titolo += f"  `v{_app_version}`"
@@ -82,7 +236,8 @@ st.caption(
     "vengono scartate automaticamente e segnalate."
 )
 
-with st.expander("📖 Glossario dei termini (parti da qui se sei alle prime armi)", expanded=False):
+with st.expander("📖 Glossario dei termini (parti da qui se sei alle prime armi)",
+                  expanded=st.session_state.pop("_apri_glossario", False)):
     st.markdown(
         """
 **Le basi**
@@ -123,6 +278,51 @@ with st.expander("📖 Glossario dei termini (parti da qui se sei alle prime arm
 - **Skew** — differenza di IV tra strike: di solito le put OTM costano di più (protezione al ribasso).
 - **Term structure** — come cambia la IV tra scadenze brevi e lunghe.
 - **Pinning** — tendenza del prezzo a "incollarsi" agli strike molto carichi verso la scadenza.
+        """
+    )
+
+with st.expander("🖥️ Scaricare dati da terminale (opzioni e future, anche storico)",
+                  expanded=st.session_state.pop("_apri_istruzioni_scarico", False)):
+    st.markdown(
+        """
+Questa pagina scarica un giorno alla volta (quello scelto qui sopra). Per scaricare
+**più giorni insieme** (es. ricostruire uno storico), o l'Open Interest del
+**future FIB** (non le opzioni), si usano due script a parte da terminale — vanno
+lanciati dalla stessa cartella di questa app (importano direttamente
+`euronext_live_module.py`/`euronext_module.py`).
+
+**Opzioni — backfill storico (`scarica_backfill_opzioni.py`)**
+
+Scrive un file `dati/YYYYMMDD.csv` per ciascun giorno, nello stesso formato che
+questa pagina legge già con "Scegli dalla cartella dati/" qui sopra.
+
+```
+python3 scarica_backfill_opzioni.py --data 2026-09-14                        # un solo giorno
+python3 scarica_backfill_opzioni.py --da 2026-06-19 --a 2026-09-14           # intervallo (backfill)
+python3 scarica_backfill_opzioni.py --da 2026-06-19 --a 2026-09-14 --forza   # riscrive anche i giorni già presenti
+python3 scarica_backfill_opzioni.py --da 2026-06-19 --a 2026-09-14 --pausa 30   # più prudente verso il server
+```
+
+Salta automaticamente sabato/domenica; un giorno che dà errore (es. festivo di
+borsa) non blocca gli altri - viene segnalato e si passa al successivo.
+
+**Future FIB — Open Interest (`scarica_futures_euronext.py`)**
+
+A differenza delle opzioni (un file per giorno, tante scadenze/strike), qui c'è
+una sola riga per scadenza al giorno: tutto finisce in un unico storico CSV
+(`dati_locali/storico_oi_future.csv`) — pensato soprattutto per non perdere l'OI
+di una scadenza quando esce dalla pagina live di Euronext dopo il settlement
+(tipico durante le settimane della "strega").
+
+```
+python3 scarica_futures_euronext.py                                          # solo oggi
+python3 scarica_futures_euronext.py --data 2026-06-19                        # un giorno storico
+python3 scarica_futures_euronext.py --da 2026-06-19 --a 2026-09-14 --pausa 30    # intervallo
+```
+
+⚠️ Entrambi gli script vanno lanciati da terminale (non da questa pagina): sono
+pensati per scarichi lunghi/batch, con pause configurabili per non sovraccaricare
+il server Euronext.
         """
     )
 
@@ -280,7 +480,7 @@ elif percorso_prezzi and analysis_date is None:
 # SIDEBAR: parametri di mercato (default FTSEMIB, non SPX)
 # -----------------------------------------------------------------------------
 with st.sidebar:
-    st.header("⚙️ Parametri di mercato")
+    st.header("⚙️ Parametri")
     # Se lo storico prezzi ha trovato una corrispondenza, la propone come default;
     # altrimenti resta libero (nessun valore precompilato "fisso" da dimenticare di cambiare).
     # NOTA (corretto 18/08/2026): Streamlit cancella automaticamente da session_state la
@@ -303,46 +503,79 @@ with st.sidebar:
         help="Precompilato automaticamente se carichi lo storico prezzi (punto 2 sopra), in "
              "qualunque ordine carichi i due file; altrimenti va inserito a mano."
     )
+
+    # v2.98: parametri secondari (cambiano raramente rispetto allo spot) raccolti
+    # in un expander compatto, per non occupare spazio verticale ogni giorno.
+    with st.expander("Parametri (Vol., Risk Free...)", expanded=False):
+        st.caption("🔴 Il più rilevante da tenere d'occhio, sotto:")
+        volume_threshold = st.number_input(
+            "Soglia volume significativo (contratti)",
+            min_value=1, value=100, step=10,
+            help="Sopra questa soglia (per singolo strike/scadenza) l'evento viene proposto per il log. "
+                 "Il notional stimato in € nel log aiuta a giudicare la rilevanza reale anche per strike "
+                 "deep ITM lontani dallo spot, dove pochi contratti pesano molto di più."
+        )
+
+        st.divider()
+        st.caption(
+            "🟡 Aggiornamento periodico, non giornaliero: Risk-free segue le decisioni BCE (cambia "
+            "solo quando la BCE muove i tassi); Dividend yield si muove lentamente nel corso dell'anno "
+            "(ha senso ricontrollarlo ogni tanto, es. trimestralmente)."
+        )
+        col_r, col_d = st.columns(2)
+        with col_r:
+            risk_free_rate = st.number_input(
+                "Risk-free (%)", min_value=-5.0, max_value=25.0, value=2.50, step=0.05, format="%.2f",
+                help="Default: tasso BCE sui depositi in vigore dal 16/9/2026 (rialzo di 0,25 punti deciso il 10/9/2026)."
+            ) / 100.0
+        with col_d:
+            dividend_yield = st.number_input(
+                "Dividend yield (%)", min_value=0.0, max_value=25.0, value=4.20, step=0.10, format="%.2f",
+                help="Default: stima dividend yield FTSEMIB 2026 (~4.2%, contro l'1.3% USA dell'app CBOE)."
+            ) / 100.0
+
+        st.divider()
+        st.caption("🟢 Cambia raramente (MIBO: €2,5/punto, invariato da anni):")
+        contract_multiplier = st.number_input(
+            "Moltiplicatore contratto (€/punto)",
+            min_value=0.1, value=2.5, step=0.1, format="%.1f",
+            help="MIBO (FTSEMIB, Borsa Italiana/Euronext): €2.5 per punto indice, non 100 come SPX."
+        )
+
+        st.divider()
+        st.caption(
+            "Questi valori incidono su tutte le esposizioni nozionali (GEX/DEX/VEX) e sui "
+            "livelli di Flip. Il risk-free e il dividend yield incidono anche sulla IV derivata."
+        )
+
     st.divider()
-    risk_free_rate = st.number_input(
-        "Risk-free rate (% annuo)",
-        min_value=-5.0, max_value=25.0, value=2.25, step=0.05, format="%.2f",
-        help="Default: tasso BCE sui depositi in vigore dal 17/6/2026."
-    ) / 100.0
-    dividend_yield = st.number_input(
-        "Dividend yield (% annuo)",
-        min_value=0.0, max_value=25.0, value=4.20, step=0.10, format="%.2f",
-        help="Default: stima dividend yield FTSEMIB 2026 (~4.2%, contro l'1.3% USA dell'app CBOE)."
-    ) / 100.0
-    contract_multiplier = st.number_input(
-        "Moltiplicatore contratto (€/punto)",
-        min_value=0.1, value=2.5, step=0.1, format="%.1f",
-        help="MIBO (FTSEMIB, Borsa Italiana/Euronext): €2.5 per punto indice, non 100 come SPX."
-    )
-    st.divider()
-    volume_threshold = st.number_input(
-        "Soglia volume significativo (contratti)",
-        min_value=1, value=100, step=10,
-        help="Sopra questa soglia (per singolo strike/scadenza) l'evento viene proposto per il log. "
-             "Il notional stimato in € nel log aiuta a giudicare la rilevanza reale anche per strike "
-             "deep ITM lontani dallo spot, dove pochi contratti pesano molto di più."
-    )
-    st.divider()
-    st.caption(
-        "Questi valori incidono su tutte le esposizioni nozionali (GEX/DEX/VEX) e sui "
-        "livelli di Flip. Il risk-free e il dividend yield incidono anche sulla IV derivata."
-    )
+    st.markdown("**🔗 Link utili**")
+    st.markdown("[📊 Euronext — Opzioni MIBO](https://live.euronext.com/en/product/index-options/MIB-DMIL/settlement-prices)")
+    st.markdown("[📈 Euronext — Future FIB](https://live.euronext.com/en/product/index-futures/FIB-DMIL/settlement-prices)")
+    st.caption("**Vai a (in cima o in fondo alla pagina principale):**")
+    if st.button("📖 Help/Glossario", key="btn_vai_glossario", width="stretch"):
+        st.session_state["_apri_glossario"] = True
+        st.rerun()
+    if st.button("📥 Istruzioni di scarico", key="btn_vai_istruzioni", width="stretch"):
+        st.session_state["_apri_istruzioni_scarico"] = True
+        st.rerun()
+    if st.button("📚 Teoria", key="btn_vai_teoria", width="stretch"):
+        st.session_state["tab_principale"] = "📚 Teoria"
+        st.rerun()
 
 VOLUME_LOG_PATH = "dati_locali/eventi_volume.csv"
 DATI_FOLDER_DEFAULT = "dati"
 TOTALI_LOG_PATH = "dati_locali/storico_totali.csv"
 STATS_LOG_PATH = "dati_locali/storico_stats.csv"
 TRENO_UFFICIALE_PATH = "dati_locali/treno_settlement_ufficiale.csv"
+PORNOCICLO_CORREZIONI_PATH = "dati_locali/pornociclo_correzioni.csv"
 DOC_MD_FOLDER = "documentazione/md"
 DOC_HTML_SRC_FOLDER = "documentazione/html_sorgente"
 DOC_HTML_READY_FOLDER = "documentazione/html_pronto"
 DOC_PDF_FOLDER = "static/pdf"
 CICLI_CONVALIDA_PATH = "dati_locali/cicli_convalida.csv"
+CICLI_PREVISTI_PATH = "dati_locali/cicli_previsti.csv"
+CICLI_MANUALI_PATH = "dati_locali/cicli_manuali.csv"
 
 if df_raw is not None and spot_price > 0:
     log_totali_giornalieri(df_raw, analysis_date, TOTALI_LOG_PATH, spot=spot_price)
@@ -448,7 +681,7 @@ if df_raw is not None:
         '🎯 Support/Res (OI & Vol)', '📉 Stats', '📈 Vol Surface', '📋 Eventi Volume',
         '📈 Andamento Storico', '📝 Note', '⏳ Decadimento', '⚖️ Ripartizione OI', '🚂 Treno',
         '🌀 Cicli', '📚 Teoria'
-    ])
+    ], key="tab_principale", on_change="rerun")
 
     # ========================= TAB SUMMARY =========================
     with tab_dati:
@@ -1860,6 +2093,7 @@ secondo il metodo di Treno — oscillazione standard e oscillazione inversa (il 
                                 else:
                                     st.dataframe(_tab_durata_bassi, width="stretch", hide_index=True)
 
+                    _df_pivot_pc_vis = pd.DataFrame()
                     if _tf_treno == "Weekly":
                         _df_bars_treno = (
                             _df_prezzi_treno_filtrato.set_index('time')
@@ -1868,6 +2102,102 @@ secondo il metodo di Treno — oscillazione standard e oscillazione inversa (il 
                             .dropna()
                             .reset_index()
                         )
+
+                        st.markdown("**🎯 Pornociclo (rilevamento oggettivo) — sperimentale**")
+                        _mostra_pornociclo = st.checkbox(
+                            "Mostra i pivot A/B/C masc./fimmina rilevati automaticamente",
+                            value=False, key="treno_mostra_pornociclo"
+                        )
+                        if _mostra_pornociclo:
+                            st.caption(
+                                "Regola: un candidato (massimo o minimo) è confermato quando, dopo almeno 9 "
+                                "barre settimanali dal pivot precedente, si sono manifestate 3 barre (anche non "
+                                "consecutive, anche inside) con l'estremo opposto via via più spinto — minimi "
+                                "decrescenti per confermare un massimo, massimi crescenti per un minimo. "
+                                "Calcolato sull'intera storia disponibile (non solo sul periodo filtrato qui "
+                                "sopra), per non perdere il conteggio ai bordi del filtro. Un pivot confermato "
+                                "non viene mai più spostato — solo l'ultimo, se ancora aperto, può aggiornarsi. "
+                                "L'eccezione delle 4 barre non è ancora attiva (vedi nota nel codice)."
+                            )
+
+                            _df_settimanale_completo = pc_resample_weekly(
+                                _df_prezzi_treno[['time', 'open', 'high', 'low', 'close']]
+                            )
+                            if len(_df_settimanale_completo) < 10:
+                                st.warning("Servono almeno una decina di barre settimanali per innescare il rilevamento.")
+                                _df_pivot_pc = pd.DataFrame()
+                            else:
+                                _finestra_seed = _df_settimanale_completo.iloc[:10]
+                                _idx_max_seed = _finestra_seed['high'].idxmax()
+                                _idx_min_seed = _finestra_seed['low'].idxmin()
+                                _seed_idx, _seed_tipo = (
+                                    (_idx_max_seed, 'massimo') if _idx_max_seed < _idx_min_seed
+                                    else (_idx_min_seed, 'minimo')
+                                )
+                                _pivots_pc = rileva_pivot_pornociclo(
+                                    _df_settimanale_completo, primo_idx=_seed_idx, primo_tipo=_seed_tipo,
+                                    usa_eccezione=False
+                                )
+                                _etichette_pc = genera_etichette(_pivots_pc)
+                                _df_pivot_pc = pd.DataFrame([{
+                                    'Data': p['time'].date(), 'Tipo': p['tipo'], 'Etichetta': et,
+                                    'Valore': round(p['valore']),
+                                    'Conferma': p['time_conferma'].date() if p['time_conferma'] is not None else None,
+                                    'Distanza_barre': p['distanza_barre'],
+                                } for p, et in zip(_pivots_pc, _etichette_pc)])
+                                # Il primo pivot e' solo l'innesco arbitrario, non ha significato metodologico
+                                if len(_df_pivot_pc) > 0:
+                                    _df_pivot_pc.loc[0, 'Etichetta'] = '(innesco)'
+
+                            # Correzioni manuali persistenti: per i rari casi ambigui (secondo l'utente, ~1
+                            # ogni 50 sequenze) si puo' correggere qui senza perdere il resto - stesso schema
+                            # gia' usato per il Settlement ufficiale in questa stessa sezione.
+                            if not _df_pivot_pc.empty:
+                                if os.path.exists(PORNOCICLO_CORREZIONI_PATH):
+                                    _df_correzioni_pc = pd.read_csv(PORNOCICLO_CORREZIONI_PATH, parse_dates=['Data'])
+                                    _df_correzioni_pc['Data'] = _df_correzioni_pc['Data'].dt.date
+                                    _df_pivot_pc = _df_pivot_pc.merge(
+                                        _df_correzioni_pc[['Data', 'Etichetta']].rename(columns={'Etichetta': 'Etichetta_corretta'}),
+                                        on='Data', how='left'
+                                    )
+                                    _df_pivot_pc['Etichetta'] = _df_pivot_pc['Etichetta_corretta'].fillna(_df_pivot_pc['Etichetta'])
+                                    _df_pivot_pc = _df_pivot_pc.drop(columns='Etichetta_corretta')
+
+                                st.caption(
+                                    "Per correggere un'etichetta ambigua, modifica la colonna 'Etichetta' qui "
+                                    "sotto e premi 'Salva correzioni' — resta memorizzata anche ricaricando la pagina."
+                                )
+                                _df_pivot_pc_edit = st.data_editor(
+                                    _df_pivot_pc, hide_index=True, width="stretch", key="editor_pornociclo",
+                                    disabled=['Data', 'Tipo', 'Valore', 'Conferma', 'Distanza_barre']
+                                )
+                                if st.button("Salva correzioni", key="salva_correzioni_pornociclo"):
+                                    _righe_modificate = _df_pivot_pc_edit[
+                                        _df_pivot_pc_edit['Etichetta'] != _df_pivot_pc['Etichetta']
+                                    ][['Data', 'Etichetta']]
+                                    if not _righe_modificate.empty:
+                                        os.makedirs(os.path.dirname(PORNOCICLO_CORREZIONI_PATH), exist_ok=True)
+                                        _esistenti_pc = (
+                                            pd.read_csv(PORNOCICLO_CORREZIONI_PATH, parse_dates=['Data'])
+                                            if os.path.exists(PORNOCICLO_CORREZIONI_PATH) else pd.DataFrame(columns=['Data', 'Etichetta'])
+                                        )
+                                        if not _esistenti_pc.empty:
+                                            _esistenti_pc['Data'] = pd.to_datetime(_esistenti_pc['Data']).dt.date
+                                        _combinato_pc = pd.concat([_esistenti_pc, _righe_modificate], ignore_index=True)
+                                        _combinato_pc = _combinato_pc.drop_duplicates(subset='Data', keep='last')
+                                        _combinato_pc.to_csv(PORNOCICLO_CORREZIONI_PATH, index=False)
+                                        st.success(f"{len(_righe_modificate)} correzione/i salvata/e.")
+                                        st.rerun()
+                                    else:
+                                        st.info("Nessuna modifica da salvare.")
+                                _df_pivot_pc = _df_pivot_pc_edit
+
+                                # Filtro solo per la visualizzazione sul grafico (il rilevamento resta sull'intera storia)
+                                _df_pivot_pc_vis = _df_pivot_pc[
+                                    (_df_pivot_pc['Data'] >= _data_min_treno) & (_df_pivot_pc['Data'] <= _data_max_treno)
+                                ]
+                        else:
+                            _df_pivot_pc_vis = pd.DataFrame()
                     elif _tf_treno == "Monthly":
                         _df_bars_treno = (
                             _df_prezzi_treno_filtrato.set_index('time')
@@ -1992,9 +2322,68 @@ secondo il metodo di Treno — oscillazione standard e oscillazione inversa (il 
                             marker=dict(color='#38bdf8', size=13, symbol='triangle-up'),
                             hovertemplate='%{x}<br>Minimo confermato: %{y:,.2f}<extra></extra>'
                         ))
+                    if not _df_pivot_pc_vis.empty:
+                        # Per il plotting servono Timestamp, non oggetti date "nudi": _df_bars_treno['time']
+                        # (usato dalle candele) e' datetime64, e con hovermode='x unified' un mix di dtype
+                        # sullo stesso asse X puo' disallineare l'hover, facendo "saltare" alcune barre.
+                        _df_pivot_pc_vis = _df_pivot_pc_vis.copy()
+                        _df_pivot_pc_vis['Data'] = pd.to_datetime(_df_pivot_pc_vis['Data'])
+                        _df_pivot_pc_vis['Conferma'] = pd.to_datetime(_df_pivot_pc_vis['Conferma'])
+                        for _tipo_pc, _colore_pc in [('massimo', '#c084fc'), ('minimo', '#2dd4bf')]:
+                            _sub_pc = _df_pivot_pc_vis[_df_pivot_pc_vis['Tipo'] == _tipo_pc]
+                            if _sub_pc.empty:
+                                continue
+                            _confermati_pc = _sub_pc[_sub_pc['Conferma'].notna()]
+                            _aperti_pc = _sub_pc[_sub_pc['Conferma'].isna()]
+                            if not _confermati_pc.empty:
+                                _fig_treno.add_trace(go.Scatter(
+                                    x=_confermati_pc['Data'], y=_confermati_pc['Valore'],
+                                    mode='markers+text', name=f'Pornociclo — {_tipo_pc} confermato',
+                                    text=_confermati_pc['Etichetta'],
+                                    textposition='top center' if _tipo_pc == 'massimo' else 'bottom center',
+                                    textfont=dict(color=_colore_pc, size=11),
+                                    marker=dict(color=_colore_pc, size=12, symbol='circle',
+                                                line=dict(color='white', width=1)),
+                                    hovertemplate='%{text}<br>%{x}<br>Valore: %{y:,.0f}<extra></extra>'
+                                ))
+                            if not _aperti_pc.empty:
+                                _fig_treno.add_trace(go.Scatter(
+                                    x=_aperti_pc['Data'], y=_aperti_pc['Valore'],
+                                    mode='markers+text', name=f'Pornociclo — {_tipo_pc} candidato (aperto)',
+                                    text=_aperti_pc['Etichetta'],
+                                    textposition='top center' if _tipo_pc == 'massimo' else 'bottom center',
+                                    textfont=dict(color=_colore_pc, size=11),
+                                    marker=dict(color=_colore_pc, size=12, symbol='circle-open',
+                                                line=dict(width=2)),
+                                    hovertemplate='%{text} (ancora aperto)<br>%{x}<br>Valore: %{y:,.0f}<extra></extra>'
+                                ))
+                        _confermati_con_data_pc = _df_pivot_pc_vis[_df_pivot_pc_vis['Conferma'].notna()]
+                        if not _confermati_con_data_pc.empty:
+                            _lookup_barre_pc = _df_bars_treno.set_index('time')[['high', 'low']]
+                            _confermati_con_data_pc = _confermati_con_data_pc.merge(
+                                _lookup_barre_pc, left_on='Conferma', right_index=True, how='left'
+                            )
+                            _confermati_con_data_pc['y_conferma'] = np.where(
+                                _confermati_con_data_pc['Tipo'] == 'massimo',
+                                _confermati_con_data_pc['high'], _confermati_con_data_pc['low']
+                            )
+                            _confermati_con_data_pc['y_conferma'] = (
+                                _confermati_con_data_pc['y_conferma'].fillna(_confermati_con_data_pc['Valore'])
+                            )
+                            _fig_treno.add_trace(go.Scatter(
+                                x=_confermati_con_data_pc['Conferma'], y=_confermati_con_data_pc['y_conferma'],
+                                mode='markers', name='Barra di conferma',
+                                marker=dict(color='#facc15', size=9, symbol='diamond'),
+                                hovertemplate='Conferma: %{x}<extra></extra>'
+                            ))
                     _fig_treno.update_layout(
                         template='plotly_dark', height=650, margin=dict(l=10, r=10, t=30, b=10),
-                        xaxis_rangeslider_visible=False, hovermode='x unified',
+                        xaxis_rangeslider_visible=False,
+                        # 'closest' invece di 'x unified': con trace sparse (settlement, pornociclo) insieme
+                        # alle candele (una per settimana), 'x unified' a volte "cattura" l'hover sul punto
+                        # sparso piu' vicino invece che sulla candela sotto il cursore, facendo sembrare che
+                        # alcune barre settimanali siano "saltate" - segnalato dall'utente il 17/09/2026.
+                        hovermode='closest',
                         legend=dict(orientation='h', yanchor='bottom', y=1.02)
                     )
                     st.plotly_chart(_fig_treno, width="stretch", key="treno_chart")
@@ -2187,7 +2576,7 @@ valutazione resta salvata anche cambiando filtro periodo.
                             "Tipo grafico", ["Candele", "Barre"], horizontal=True, key="cicli_tipo_grafico"
                         )
 
-                    col_cy1, col_cy2, col_cy3 = st.columns(3)
+                    col_cy1, col_cy2, col_cy3, col_cy4 = st.columns(4)
                     with col_cy1:
                         _ciclo_barre_cicli = st.number_input(
                             "Lunghezza ciclo (barre del timeframe scelto)",
@@ -2200,6 +2589,12 @@ valutazione resta salvata anche cambiando filtro periodo.
                     with col_cy3:
                         _mostra_ciclo_standard_cicli = st.checkbox(
                             "Cicli diritti (da minimi)", value=True, key="cicli_mostra_standard"
+                        )
+                    with col_cy4:
+                        _mostra_etichette_cicli = st.checkbox(
+                            "Etichette data/valore sui pivot", value=True, key="cicli_mostra_etichette",
+                            help="Utile su un daily denso dove leggere data/livello a colpo d'occhio è "
+                                 "difficile - disattivala se il grafico diventa troppo affollato (es. su 'Tutto')."
                         )
                     _finestra_conferma_cicli = max(1, round(_ciclo_barre_cicli / 4))
                     st.caption(
@@ -2221,6 +2616,80 @@ valutazione resta salvata anche cambiando filtro periodo.
 
                     _data_min_cicli = _df_prezzi_cicli_filtrato['time'].min().date()
                     _data_max_cicli = _df_prezzi_cicli_filtrato['time'].max().date()
+
+                    with st.expander("➕ Aggiungi uno start di ciclo a mano", expanded=False):
+                        st.caption(
+                            "Per testare un'ipotesi diversa da quella rilevata in automatico, o per "
+                            "etichettare cicli di ordine più fine (T+1/T/T-1) che il rilevatore automatico "
+                            "non segue: il punto compare sul grafico con una stella dorata, distinta dai "
+                            "pivot automatici."
+                        )
+                        col_man1, col_man2, col_man3, col_man4 = st.columns([1, 1, 1, 2])
+                        with col_man1:
+                            _data_manuale_cicli = st.date_input(
+                                "Data", value=_data_max_cicli, min_value=_data_min_cicli,
+                                max_value=_data_max_cicli, key="cicli_data_manuale"
+                            )
+                        with col_man2:
+                            _tipo_manuale_cicli = st.radio(
+                                "Tipo", ["diretto (minimo)", "inverso (massimo)"], key="cicli_tipo_manuale"
+                            )
+                        with col_man3:
+                            _ordine_manuale_cicli = st.selectbox(
+                                "Ordine", ["T+2", "T+1", "T", "T-1"], index=0, key="cicli_ordine_manuale"
+                            )
+                        with col_man4:
+                            _nota_manuale_cicli = st.text_input("Nota (opzionale)", key="cicli_nota_manuale")
+
+                        if st.button("Aggiungi punto manuale", key="cicli_aggiungi_manuale"):
+                            os.makedirs(os.path.dirname(CICLI_MANUALI_PATH), exist_ok=True)
+                            _esistenti_man = (
+                                pd.read_csv(CICLI_MANUALI_PATH, parse_dates=['Data'])
+                                if os.path.exists(CICLI_MANUALI_PATH)
+                                else pd.DataFrame(columns=['Data', 'Tipo', 'Ordine', 'Nota'])
+                            )
+                            if 'Ordine' not in _esistenti_man.columns:  # file salvato prima di questa colonna
+                                _esistenti_man['Ordine'] = 'T+2'
+                            _nuova_riga_man = pd.DataFrame([{
+                                'Data': pd.Timestamp(_data_manuale_cicli), 'Tipo': _tipo_manuale_cicli,
+                                'Ordine': _ordine_manuale_cicli, 'Nota': _nota_manuale_cicli
+                            }])
+                            _combinato_man = pd.concat([_esistenti_man, _nuova_riga_man], ignore_index=True)
+                            _combinato_man.to_csv(CICLI_MANUALI_PATH, index=False)
+                            st.success(
+                                f"Punto manuale aggiunto: {_ordine_manuale_cicli} {_tipo_manuale_cicli} il "
+                                f"{_data_manuale_cicli.strftime('%d/%m/%Y')}."
+                            )
+                            st.rerun()
+
+                        _df_manuali_cicli = (
+                            pd.read_csv(CICLI_MANUALI_PATH, parse_dates=['Data'])
+                            if os.path.exists(CICLI_MANUALI_PATH)
+                            else pd.DataFrame(columns=['Data', 'Tipo', 'Ordine', 'Nota'])
+                        )
+                        if 'Ordine' not in _df_manuali_cicli.columns:  # file salvato prima di questa colonna
+                            _df_manuali_cicli['Ordine'] = 'T+2'
+                        if not _df_manuali_cicli.empty:
+                            st.caption("Punti manuali salvati — per eliminarne uno usa il cestino nella riga, poi salva:")
+                            _df_manuali_edit = st.data_editor(
+                                _df_manuali_cicli[['Data', 'Tipo', 'Ordine', 'Nota']], num_rows="dynamic",
+                                hide_index=True, width="stretch", key="editor_cicli_manuali",
+                                column_config={
+                                    'Tipo': st.column_config.SelectboxColumn(
+                                        "Tipo", options=["diretto (minimo)", "inverso (massimo)"]
+                                    ),
+                                    'Ordine': st.column_config.SelectboxColumn(
+                                        "Ordine", options=["T+2", "T+1", "T", "T-1"]
+                                    ),
+                                }
+                            )
+                            if st.button("Salva modifiche ai punti manuali", key="salva_cicli_manuali"):
+                                _df_manuali_edit.to_csv(CICLI_MANUALI_PATH, index=False)
+                                st.success("Salvato.")
+                                st.rerun()
+                            _df_manuali_cicli = _df_manuali_edit
+                            _df_manuali_cicli = _df_manuali_edit
+
                     _df_barre_vista_cicli = _df_barre_completo_cicli[
                         (_df_barre_completo_cicli['time'].dt.date >= _data_min_cicli) &
                         (_df_barre_completo_cicli['time'].dt.date <= _data_max_cicli)
@@ -2229,8 +2698,18 @@ valutazione resta salvata anche cambiando filtro periodo.
                     _pivot_alti_full_cicli, _pivot_bassi_full_cicli = rileva_pivot_alternati(
                         _df_barre_completo_cicli, _finestra_conferma_cicli
                     )
-                    _pivot_alti_cicli = pd.DataFrame(columns=['idx', 'time', 'valore'])
-                    _pivot_bassi_cicli = pd.DataFrame(columns=['idx', 'time', 'valore'])
+                    # Barre trascorse dal precedente pivot DELLO STESSO TIPO (diretto con diretto, inverso
+                    # con inverso - non nella sequenza alternata mista) - calcolato sull'intera serie prima
+                    # del filtro periodo, cosi' il primo punto visibile non perde il conteggio.
+                    if not _pivot_alti_full_cicli.empty:
+                        _pivot_alti_full_cicli = _pivot_alti_full_cicli.copy()
+                        _pivot_alti_full_cicli['barre_da_precedente'] = _pivot_alti_full_cicli['idx'].diff()
+                    if not _pivot_bassi_full_cicli.empty:
+                        _pivot_bassi_full_cicli = _pivot_bassi_full_cicli.copy()
+                        _pivot_bassi_full_cicli['barre_da_precedente'] = _pivot_bassi_full_cicli['idx'].diff()
+
+                    _pivot_alti_cicli = pd.DataFrame(columns=['idx', 'time', 'valore', 'barre_da_precedente'])
+                    _pivot_bassi_cicli = pd.DataFrame(columns=['idx', 'time', 'valore', 'barre_da_precedente'])
                     if _mostra_ciclo_inverso_cicli and not _pivot_alti_full_cicli.empty:
                         _pivot_alti_cicli = _pivot_alti_full_cicli[
                             (pd.to_datetime(_pivot_alti_full_cicli['time']).dt.date >= _data_min_cicli) &
@@ -2263,22 +2742,76 @@ valutazione resta salvata anche cambiando filtro periodo.
                         hovertemplate='%{x}<br>SMA20: %{y:,.2f}<extra></extra>'
                     ))
                     if not _pivot_alti_cicli.empty:
+                        _barre_txt_alti = _pivot_alti_cicli['barre_da_precedente'].apply(
+                            lambda v: f"{int(v)}b<br>" if pd.notna(v) else ""
+                        )
                         _fig_cicli.add_trace(go.Scatter(
                             x=_pivot_alti_cicli['time'], y=_pivot_alti_cicli['valore'],
-                            mode='markers', name='Ciclo inverso (da massimo)',
+                            mode='markers+text' if _mostra_etichette_cicli else 'markers',
+                            name='Ciclo inverso (da massimo)',
+                            text=(_barre_txt_alti + pd.to_datetime(_pivot_alti_cicli['time']).dt.strftime('%d/%m')
+                                  + '<br>' + _pivot_alti_cicli['valore'].round().astype(int).astype(str)),
+                            textposition='top center',
+                            textfont=dict(color='#c084fc', size=10),
                             marker=dict(color='#c084fc', size=13, symbol='triangle-down'),
                             hovertemplate='%{x}<br>Massimo confermato: %{y:,.2f}<extra></extra>'
                         ))
                     if not _pivot_bassi_cicli.empty:
+                        _barre_txt_bassi = _pivot_bassi_cicli['barre_da_precedente'].apply(
+                            lambda v: f"{int(v)}b<br>" if pd.notna(v) else ""
+                        )
                         _fig_cicli.add_trace(go.Scatter(
                             x=_pivot_bassi_cicli['time'], y=_pivot_bassi_cicli['valore'],
-                            mode='markers', name='Ciclo diritto (da minimo)',
+                            mode='markers+text' if _mostra_etichette_cicli else 'markers',
+                            name='Ciclo diritto (da minimo)',
+                            text=(_barre_txt_bassi + pd.to_datetime(_pivot_bassi_cicli['time']).dt.strftime('%d/%m')
+                                  + '<br>' + _pivot_bassi_cicli['valore'].round().astype(int).astype(str)),
+                            textposition='bottom center',
+                            textfont=dict(color='#38bdf8', size=10),
                             marker=dict(color='#38bdf8', size=13, symbol='triangle-up'),
                             hovertemplate='%{x}<br>Minimo confermato: %{y:,.2f}<extra></extra>'
                         ))
+
+                    _df_manuali_vis_cicli = pd.DataFrame(columns=['Data', 'Tipo', 'Ordine', 'Nota'])
+                    if not _df_manuali_cicli.empty:
+                        _df_manuali_vis_cicli = _df_manuali_cicli[
+                            (_df_manuali_cicli['Data'].dt.date >= _data_min_cicli) &
+                            (_df_manuali_cicli['Data'].dt.date <= _data_max_cicli)
+                        ].copy().sort_values('Data').reset_index(drop=True)
+                    if not _df_manuali_vis_cicli.empty:
+                        _lookup_manuali_cicli = _df_barre_completo_cicli.set_index('time')[['high', 'low']]
+                        _df_manuali_vis_cicli = _df_manuali_vis_cicli.merge(
+                            _lookup_manuali_cicli, left_on='Data', right_index=True, how='left'
+                        )
+                        _df_manuali_vis_cicli['valore'] = np.where(
+                            _df_manuali_vis_cicli['Tipo'].str.startswith('inverso'),
+                            _df_manuali_vis_cicli['high'], _df_manuali_vis_cicli['low']
+                        )
+                        # Stessa convenzione dei pivot automatici: etichetta sopra per 'inverso' (massimo),
+                        # sotto per 'diretto' (minimo) - invece di alternare ad angoli, per coerenza visiva.
+                        _testposition_manuali = [
+                            'top center' if t.startswith('inverso') else 'bottom center'
+                            for t in _df_manuali_vis_cicli['Tipo']
+                        ]
+                        _fig_cicli.add_trace(go.Scatter(
+                            x=_df_manuali_vis_cicli['Data'], y=_df_manuali_vis_cicli['valore'],
+                            mode='markers+text' if _mostra_etichette_cicli else 'markers',
+                            name='Punto manuale',
+                            text=(_df_manuali_vis_cicli['Ordine'] + '<br>'
+                                  + pd.to_datetime(_df_manuali_vis_cicli['Data']).dt.strftime('%d/%m') + '<br>'
+                                  + _df_manuali_vis_cicli['valore'].round().astype('Int64').astype(str)),
+                            textposition=_testposition_manuali,
+                            textfont=dict(color='#facc15', size=10),
+                            marker=dict(color='#facc15', size=15, symbol='star', line=dict(color='white', width=1)),
+                            customdata=_df_manuali_vis_cicli['Tipo'],
+                            hovertemplate='%{text}<br>Tipo: %{customdata}<extra></extra>'
+                        ))
                     _fig_cicli.update_layout(
                         template='plotly_dark', height=650, margin=dict(l=10, r=10, t=30, b=10),
-                        xaxis_rangeslider_visible=False, hovermode='x unified',
+                        xaxis_rangeslider_visible=False,
+                        # 'closest' invece di 'x unified': stesso motivo gia' risolto nel tab Treno (marker
+                        # sparsi + candele dense possono far "saltare" l'hover su alcune barre).
+                        hovermode='closest',
                         legend=dict(orientation='h', yanchor='bottom', y=1.02)
                     )
                     st.plotly_chart(_fig_cicli, width="stretch", key="cicli_chart")
@@ -2304,6 +2837,7 @@ valutazione resta salvata anche cambiando filtro periodo.
                         )
                         if _classificato.empty:
                             return _classificato
+                        _classificato = _classificato.sort_values('A', ascending=False).reset_index(drop=True)
                         if _df_convalida_cicli.empty:
                             _classificato['Convalida'] = ''
                             _classificato['Nota'] = ''
@@ -2326,19 +2860,42 @@ valutazione resta salvata anche cambiando filtro periodo.
                     }
                     _colonne_disabilitate_cicli = ['Da', 'A', 'Barre', 'Classificazione']
 
-                    _edit_alti_cicli = pd.DataFrame()
-                    with st.expander("📏 Cicli inversi rilevati (da massimi) — convalida", expanded=True):
-                        if not _mostra_ciclo_inverso_cicli:
-                            st.caption("Attiva 'Cicli inversi (da massimi)' sopra per vedere questa tabella.")
-                        else:
-                            _tab_alti_cicli = _tabella_con_convalida_cicli(_pivot_alti_full_cicli, 'inverso')
-                            if _tab_alti_cicli.empty:
-                                st.caption("Nessun ciclo completo nel periodo mostrato.")
-                            else:
-                                _edit_alti_cicli = st.data_editor(
-                                    _tab_alti_cicli, width="stretch", hide_index=True, key="cicli_edit_alti",
-                                    disabled=_colonne_disabilitate_cicli, column_config=_config_convalida_cicli
-                                )
+                    with st.expander("🔮 Cicli previsti / in corso (a mano)", expanded=True):
+                        st.caption(
+                            "Per etichettare un ciclo ancora in corso (nessun 'A' definitivo) o uno previsto "
+                            "ma non ancora confermato dal rilevatore automatico (es. i 2 nuovi T+2, diretto e "
+                            "inverso, attesi secondo Elico) - lascia 'A' vuoto se non ancora concluso. "
+                            "Aggiungi righe con il pulsante '+' della tabella."
+                        )
+                        _COLS_PREVISTI_CICLI = ['Da', 'A', 'Tipo', 'Ordine', 'Nota']
+                        _df_previsti_cicli = (
+                            pd.read_csv(CICLI_PREVISTI_PATH, parse_dates=['Da', 'A'])
+                            if os.path.exists(CICLI_PREVISTI_PATH) else pd.DataFrame(columns=_COLS_PREVISTI_CICLI)
+                        )
+                        for _col_data_prev in ['Da', 'A']:
+                            if _col_data_prev in _df_previsti_cicli.columns:
+                                _df_previsti_cicli[_col_data_prev] = pd.to_datetime(
+                                    _df_previsti_cicli[_col_data_prev], errors='coerce'
+                                ).dt.date
+                        if not _df_previsti_cicli.empty:
+                            _df_previsti_cicli = _df_previsti_cicli.sort_values('Da', ascending=False).reset_index(drop=True)
+                        _df_previsti_edit = st.data_editor(
+                            _df_previsti_cicli[_COLS_PREVISTI_CICLI], num_rows="dynamic", hide_index=True,
+                            width="stretch", key="editor_cicli_previsti",
+                            column_config={
+                                'Tipo': st.column_config.SelectboxColumn(
+                                    "Tipo", options=["diretto (minimo)", "inverso (massimo)"]
+                                ),
+                                'Ordine': st.column_config.SelectboxColumn(
+                                    "Ordine", options=["T+2", "T+1", "T", "T-1"]
+                                ),
+                            }
+                        )
+                        if st.button("💾 Salva cicli previsti/in corso", key="salva_cicli_previsti"):
+                            os.makedirs(os.path.dirname(CICLI_PREVISTI_PATH), exist_ok=True)
+                            _df_previsti_edit.to_csv(CICLI_PREVISTI_PATH, index=False)
+                            st.success(f"Salvate {len(_df_previsti_edit)} righe.")
+                            st.rerun()
 
                     _edit_bassi_cicli = pd.DataFrame()
                     with st.expander("📏 Cicli diritti rilevati (da minimi) — convalida", expanded=True):
@@ -2351,6 +2908,20 @@ valutazione resta salvata anche cambiando filtro periodo.
                             else:
                                 _edit_bassi_cicli = st.data_editor(
                                     _tab_bassi_cicli, width="stretch", hide_index=True, key="cicli_edit_bassi",
+                                    disabled=_colonne_disabilitate_cicli, column_config=_config_convalida_cicli
+                                )
+
+                    _edit_alti_cicli = pd.DataFrame()
+                    with st.expander("📏 Cicli inversi rilevati (da massimi) — convalida", expanded=True):
+                        if not _mostra_ciclo_inverso_cicli:
+                            st.caption("Attiva 'Cicli inversi (da massimi)' sopra per vedere questa tabella.")
+                        else:
+                            _tab_alti_cicli = _tabella_con_convalida_cicli(_pivot_alti_full_cicli, 'inverso')
+                            if _tab_alti_cicli.empty:
+                                st.caption("Nessun ciclo completo nel periodo mostrato.")
+                            else:
+                                _edit_alti_cicli = st.data_editor(
+                                    _tab_alti_cicli, width="stretch", hide_index=True, key="cicli_edit_alti",
                                     disabled=_colonne_disabilitate_cicli, column_config=_config_convalida_cicli
                                 )
 
