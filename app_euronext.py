@@ -10,6 +10,12 @@
 # Black-Scholes dal prezzo "Settle" di ciascuna opzione (euronext_module.py).
 # Sono quindi stime di modello, non dati di mercato osservati.
 #
+# Ultima modifica: 2026-09-21 - v3.5.1
+# - Corretto il posizionamento delle etichette dei punti manuali: ora usa la
+#   stessa convenzione dei pivot automatici (sopra-centrato per inverso,
+#   sotto-centrato per diretto) invece di alternare tra 4 angoli - segnalato
+#   come inconsistente rispetto allo stile dei triangoli automatici.
+#
 # Ultima modifica: 2026-09-20 - v3.5
 # - Tab Cicli: le due tabelle di convalida ora ordinate per data decrescente
 #   (più recenti in cima), e "Cicli diritti" mostrata prima di "Cicli
@@ -148,7 +154,7 @@
 #   aggiornare ad ogni release, insieme a questo changelog.
 # -----------------------------------------------------------------------------
 
-APP_VERSION = "3.5"
+APP_VERSION = "3.5.1"
 
 import streamlit as st
 import pandas as pd
@@ -2781,12 +2787,11 @@ valutazione resta salvata anche cambiando filtro periodo.
                             _df_manuali_vis_cicli['Tipo'].str.startswith('inverso'),
                             _df_manuali_vis_cicli['high'], _df_manuali_vis_cicli['low']
                         )
-                        # Posizione del testo alternata tra punti consecutivi (per data), cosi' due stelle
-                        # vicine nel tempo (es. a pochi giorni) non si sovrappongono in etichetta.
-                        _posizioni_alternate = ['top right', 'bottom right', 'top left', 'bottom left']
+                        # Stessa convenzione dei pivot automatici: etichetta sopra per 'inverso' (massimo),
+                        # sotto per 'diretto' (minimo) - invece di alternare ad angoli, per coerenza visiva.
                         _testposition_manuali = [
-                            _posizioni_alternate[i % len(_posizioni_alternate)]
-                            for i in range(len(_df_manuali_vis_cicli))
+                            'top center' if t.startswith('inverso') else 'bottom center'
+                            for t in _df_manuali_vis_cicli['Tipo']
                         ]
                         _fig_cicli.add_trace(go.Scatter(
                             x=_df_manuali_vis_cicli['Data'], y=_df_manuali_vis_cicli['valore'],
