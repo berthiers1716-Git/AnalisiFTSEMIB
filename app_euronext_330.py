@@ -10,16 +10,6 @@
 # Black-Scholes dal prezzo "Settle" di ciascuna opzione (euronext_module.py).
 # Sono quindi stime di modello, non dati di mercato osservati.
 #
-# Ultima modifica: 2026-09-20 - v3.4
-# - Tab Cicli, punti manuali: aggiunta la colonna "Ordine" (T+2/T+1/T/T-1),
-#   distinta da "Tipo" (diretto/inverso), sia nel modulo di inserimento che
-#   nella tabella (SelectboxColumn). Retrocompatibile con file salvati prima
-#   di questa colonna (aggiunta con default 'T+2' al volo).
-# - Corretta la sovrapposizione delle etichette quando due punti manuali sono
-#   vicini nel tempo (es. 9 e 11 settembre): la posizione del testo ora si
-#   alterna tra 4 angoli (alto/basso, destra/sinistra) invece di restare
-#   sempre "a destra" per tutti i punti.
-#
 # Ultima modifica: 2026-09-20 - v3.3
 # - Tab Cicli: le etichette sui pivot mostrano ora anche le barre trascorse
 #   dal precedente pivot DELLO STESSO TIPO (diretto con diretto, inverso con
@@ -136,7 +126,7 @@
 #   aggiornare ad ogni release, insieme a questo changelog.
 # -----------------------------------------------------------------------------
 
-APP_VERSION = "3.4"
+APP_VERSION = "3.3"
 
 import streamlit as st
 import pandas as pd
@@ -2600,12 +2590,11 @@ valutazione resta salvata anche cambiando filtro periodo.
 
                     with st.expander("➕ Aggiungi uno start di ciclo a mano", expanded=False):
                         st.caption(
-                            "Per testare un'ipotesi diversa da quella rilevata in automatico, o per "
-                            "etichettare cicli di ordine più fine (T+1/T/T-1) che il rilevatore automatico "
-                            "non segue: il punto compare sul grafico con una stella dorata, distinta dai "
-                            "pivot automatici."
+                            "Per testare un'ipotesi diversa da quella rilevata in automatico (es. un nuovo "
+                            "T+2 diretto partito il 9 o il 15 settembre): il punto compare sul grafico con "
+                            "una stella dorata, distinta dai pivot automatici."
                         )
-                        col_man1, col_man2, col_man3, col_man4 = st.columns([1, 1, 1, 2])
+                        col_man1, col_man2, col_man3 = st.columns([1, 1, 2])
                         with col_man1:
                             _data_manuale_cicli = st.date_input(
                                 "Data", value=_data_max_cicli, min_value=_data_min_cicli,
@@ -2616,10 +2605,6 @@ valutazione resta salvata anche cambiando filtro periodo.
                                 "Tipo", ["diretto (minimo)", "inverso (massimo)"], key="cicli_tipo_manuale"
                             )
                         with col_man3:
-                            _ordine_manuale_cicli = st.selectbox(
-                                "Ordine", ["T+2", "T+1", "T", "T-1"], index=0, key="cicli_ordine_manuale"
-                            )
-                        with col_man4:
                             _nota_manuale_cicli = st.text_input("Nota (opzionale)", key="cicli_nota_manuale")
 
                         if st.button("Aggiungi punto manuale", key="cicli_aggiungi_manuale"):
@@ -2627,48 +2612,34 @@ valutazione resta salvata anche cambiando filtro periodo.
                             _esistenti_man = (
                                 pd.read_csv(CICLI_MANUALI_PATH, parse_dates=['Data'])
                                 if os.path.exists(CICLI_MANUALI_PATH)
-                                else pd.DataFrame(columns=['Data', 'Tipo', 'Ordine', 'Nota'])
+                                else pd.DataFrame(columns=['Data', 'Tipo', 'Nota'])
                             )
-                            if 'Ordine' not in _esistenti_man.columns:  # file salvato prima di questa colonna
-                                _esistenti_man['Ordine'] = 'T+2'
                             _nuova_riga_man = pd.DataFrame([{
                                 'Data': pd.Timestamp(_data_manuale_cicli), 'Tipo': _tipo_manuale_cicli,
-                                'Ordine': _ordine_manuale_cicli, 'Nota': _nota_manuale_cicli
+                                'Nota': _nota_manuale_cicli
                             }])
                             _combinato_man = pd.concat([_esistenti_man, _nuova_riga_man], ignore_index=True)
                             _combinato_man.to_csv(CICLI_MANUALI_PATH, index=False)
                             st.success(
-                                f"Punto manuale aggiunto: {_ordine_manuale_cicli} {_tipo_manuale_cicli} il "
+                                f"Punto manuale aggiunto: {_tipo_manuale_cicli} il "
                                 f"{_data_manuale_cicli.strftime('%d/%m/%Y')}."
                             )
                             st.rerun()
 
                         _df_manuali_cicli = (
                             pd.read_csv(CICLI_MANUALI_PATH, parse_dates=['Data'])
-                            if os.path.exists(CICLI_MANUALI_PATH)
-                            else pd.DataFrame(columns=['Data', 'Tipo', 'Ordine', 'Nota'])
+                            if os.path.exists(CICLI_MANUALI_PATH) else pd.DataFrame(columns=['Data', 'Tipo', 'Nota'])
                         )
-                        if 'Ordine' not in _df_manuali_cicli.columns:  # file salvato prima di questa colonna
-                            _df_manuali_cicli['Ordine'] = 'T+2'
                         if not _df_manuali_cicli.empty:
                             st.caption("Punti manuali salvati — per eliminarne uno usa il cestino nella riga, poi salva:")
                             _df_manuali_edit = st.data_editor(
-                                _df_manuali_cicli[['Data', 'Tipo', 'Ordine', 'Nota']], num_rows="dynamic",
-                                hide_index=True, width="stretch", key="editor_cicli_manuali",
-                                column_config={
-                                    'Tipo': st.column_config.SelectboxColumn(
-                                        "Tipo", options=["diretto (minimo)", "inverso (massimo)"]
-                                    ),
-                                    'Ordine': st.column_config.SelectboxColumn(
-                                        "Ordine", options=["T+2", "T+1", "T", "T-1"]
-                                    ),
-                                }
+                                _df_manuali_cicli, num_rows="dynamic", hide_index=True, width="stretch",
+                                key="editor_cicli_manuali"
                             )
                             if st.button("Salva modifiche ai punti manuali", key="salva_cicli_manuali"):
                                 _df_manuali_edit.to_csv(CICLI_MANUALI_PATH, index=False)
                                 st.success("Salvato.")
                                 st.rerun()
-                            _df_manuali_cicli = _df_manuali_edit
                             _df_manuali_cicli = _df_manuali_edit
 
                     _df_barre_vista_cicli = _df_barre_completo_cicli[
@@ -2753,12 +2724,12 @@ valutazione resta salvata anche cambiando filtro periodo.
                             hovertemplate='%{x}<br>Minimo confermato: %{y:,.2f}<extra></extra>'
                         ))
 
-                    _df_manuali_vis_cicli = pd.DataFrame(columns=['Data', 'Tipo', 'Ordine', 'Nota'])
+                    _df_manuali_vis_cicli = pd.DataFrame(columns=['Data', 'Tipo', 'Nota'])
                     if not _df_manuali_cicli.empty:
                         _df_manuali_vis_cicli = _df_manuali_cicli[
                             (_df_manuali_cicli['Data'].dt.date >= _data_min_cicli) &
                             (_df_manuali_cicli['Data'].dt.date <= _data_max_cicli)
-                        ].copy().sort_values('Data').reset_index(drop=True)
+                        ].copy()
                     if not _df_manuali_vis_cicli.empty:
                         _lookup_manuali_cicli = _df_barre_completo_cicli.set_index('time')[['high', 'low']]
                         _df_manuali_vis_cicli = _df_manuali_vis_cicli.merge(
@@ -2768,25 +2739,17 @@ valutazione resta salvata anche cambiando filtro periodo.
                             _df_manuali_vis_cicli['Tipo'].str.startswith('inverso'),
                             _df_manuali_vis_cicli['high'], _df_manuali_vis_cicli['low']
                         )
-                        # Posizione del testo alternata tra punti consecutivi (per data), cosi' due stelle
-                        # vicine nel tempo (es. a pochi giorni) non si sovrappongono in etichetta.
-                        _posizioni_alternate = ['top right', 'bottom right', 'top left', 'bottom left']
-                        _testposition_manuali = [
-                            _posizioni_alternate[i % len(_posizioni_alternate)]
-                            for i in range(len(_df_manuali_vis_cicli))
-                        ]
                         _fig_cicli.add_trace(go.Scatter(
                             x=_df_manuali_vis_cicli['Data'], y=_df_manuali_vis_cicli['valore'],
                             mode='markers+text' if _mostra_etichette_cicli else 'markers',
                             name='Punto manuale',
-                            text=(_df_manuali_vis_cicli['Ordine'] + '<br>'
-                                  + pd.to_datetime(_df_manuali_vis_cicli['Data']).dt.strftime('%d/%m') + '<br>'
+                            text=(pd.to_datetime(_df_manuali_vis_cicli['Data']).dt.strftime('%d/%m') + '<br>'
                                   + _df_manuali_vis_cicli['valore'].round().astype('Int64').astype(str)),
-                            textposition=_testposition_manuali,
+                            textposition='middle right',
                             textfont=dict(color='#facc15', size=10),
                             marker=dict(color='#facc15', size=15, symbol='star', line=dict(color='white', width=1)),
                             customdata=_df_manuali_vis_cicli['Tipo'],
-                            hovertemplate='%{text}<br>Tipo: %{customdata}<extra></extra>'
+                            hovertemplate='%{x}<br>Manuale: %{customdata}<extra></extra>'
                         ))
                     _fig_cicli.update_layout(
                         template='plotly_dark', height=650, margin=dict(l=10, r=10, t=30, b=10),
