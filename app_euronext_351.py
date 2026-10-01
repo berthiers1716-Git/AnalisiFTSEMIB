@@ -10,38 +10,6 @@
 # Black-Scholes dal prezzo "Settle" di ciascuna opzione (euronext_module.py).
 # Sono quindi stime di modello, non dati di mercato osservati.
 #
-# Ultima modifica: 2026-10-01 - v3.7
-# - Tab Dati: nuova sezione "🔄 Confronto Settlement tra due date" - sceglie
-#   due file dalla cartella dati/, confronta Settle per Strike/Type/Scadenza
-#   e mostra la differenza, con filtri per scadenza e intervallo strike.
-#   Sviluppo del tab Cicli sospeso momentaneamente su richiesta.
-#
-# Ultima modifica: 2026-09-29 - v3.6.1
-# - FIX CRASH tab Cicli: se cicli_convalida.csv veniva salvato senza nessuna
-#   riga (es. tutte le convalide svuotate), al ricaricamento read_csv con
-#   parse_dates lasciava 'da'/'a' come testo invece che data (niente su cui
-#   inferire il tipo con 0 righe), e il successivo .dt.date sollevava
-#   AttributeError ("Can only use .dt accessor with datetimelike values"),
-#   bloccando l'intera app. Sostituito con pd.to_datetime(errors='coerce'),
-#   robusto anche a 0 righe e a date isolate malformate.
-# - FIX hover tab Cicli: con le etichette sui pivot/punti manuali attive,
-#   passare il mouse vicino a un marker (triangolo o stella) poteva "rubare"
-#   l'hover alla candela sotto il cursore (hovermode='closest' preferisce il
-#   punto piu' vicino tra TUTTE le tracce) - segnalato: barre successive ai
-#   marker perdevano l'OHLC completo. Ora i marker con etichetta visibile
-#   hanno hoverinfo='skip' (il dato e' gia' leggibile in etichetta), lasciando
-#   l'hover libero per le candele; se le etichette sono disattivate i marker
-#   tornano ad avere il proprio hover come prima.
-#
-# Ultima modifica: 2026-09-23 - v3.6
-# - Tab Cicli, tabelle automatiche di convalida ("Cicli diritti"/"Cicli
-#   inversi"): aggiunta la colonna "Ordine" (T+3/T+2/T+1/T/T-1), editabile
-#   come Convalida/Nota, stessa convenzione già usata per i punti manuali -
-#   primo dei 3 pezzi richiesti per il prossimo passo del tab Cicli
-#   (editabilità Da/A e colori per ordine sul grafico restano da fare).
-#   Retrocompatibile con cicli_convalida.csv salvato prima di questa colonna
-#   (aggiunta con default '' al volo).
-#
 # Ultima modifica: 2026-09-21 - v3.5.1
 # - Corretto il posizionamento delle etichette dei punti manuali: ora usa la
 #   stessa convenzione dei pivot automatici (sopra-centrato per inverso,
@@ -186,7 +154,7 @@
 #   aggiornare ad ogni release, insieme a questo changelog.
 # -----------------------------------------------------------------------------
 
-APP_VERSION = "3.7"
+APP_VERSION = "3.5.1"
 
 import streamlit as st
 import pandas as pd
@@ -732,117 +700,6 @@ if df_raw is not None:
         st.dataframe(_tabella_grezza.style.format(_formati_applicabili), width="stretch", hide_index=True)
         if not _spot_disponibile:
             st.caption("Colonne Delta/Gamma/IV/Moneyness non mostrate: richiedono lo Spot per essere calcolate.")
-
-        st.divider()
-        st.subheader("🔄 Confronto Settlement tra due date")
-        st.caption(
-            "Confronta, Strike per Strike (e Scadenza/Tipo), il Settle tra due file già scaricati "
-            "nella cartella dati/ - indipendentemente dal file caricato sopra al punto 1 per le "
-            "altre analisi. Utile per vedere come si sono mossi i prezzi delle opzioni tra due "
-            "giornate."
-        )
-        _cartella_confronto = st.text_input(
-            "Cartella file dati (sul server)", value="dati", key="cartella_confronto_settlement"
-        )
-        if not os.path.isdir(_cartella_confronto):
-            st.warning(f"Cartella non trovata: `{_cartella_confronto}`.")
-        else:
-            _file_disp_confronto = sorted(
-                [f for f in os.listdir(_cartella_confronto) if f.lower().endswith(('.csv', '.txt'))],
-                reverse=True
-            )
-            if len(_file_disp_confronto) < 2:
-                st.info("Servono almeno due file nella cartella per poter confrontare.")
-            else:
-                col_cf1, col_cf2 = st.columns(2)
-                with col_cf1:
-                    _file1_confronto = st.selectbox(
-                        "Data 1 (riferimento)", _file_disp_confronto,
-                        index=min(1, len(_file_disp_confronto) - 1), key="confronto_settlement_file1"
-                    )
-                with col_cf2:
-                    _file2_confronto = st.selectbox(
-                        "Data 2 (a confronto)", _file_disp_confronto, index=0,
-                        key="confronto_settlement_file2"
-                    )
-                if _file1_confronto == _file2_confronto:
-                    st.warning("Scegli due file diversi.")
-                else:
-                    try:
-                        with open(os.path.join(_cartella_confronto, _file1_confronto), encoding="utf-8-sig") as f:
-                            _df_cf1, _data_cf1 = parse_euronext_text(f.read())
-                        with open(os.path.join(_cartella_confronto, _file2_confronto), encoding="utf-8-sig") as f:
-                            _df_cf2, _data_cf2 = parse_euronext_text(f.read())
-                    except Exception as e:
-                        st.error(f"Errore nel parsing di uno dei due file: {e}")
-                    else:
-                        st.caption(
-                            f"Data 1 = **{_data_cf1.date()}** (`{_file1_confronto}`) — "
-                            f"Data 2 = **{_data_cf2.date()}** (`{_file2_confronto}`). "
-                            f"Differenza = Settle Data 2 − Settle Data 1."
-                        )
-                        _d1_confronto = _df_cf1[['Strike', 'Type', 'Expiration Date', 'Settle']].rename(
-                            columns={'Settle': 'Settle Data 1'}
-                        )
-                        _d2_confronto = _df_cf2[['Strike', 'Type', 'Expiration Date', 'Settle']].rename(
-                            columns={'Settle': 'Settle Data 2'}
-                        )
-                        _merge_confronto = pd.merge(
-                            _d1_confronto, _d2_confronto, on=['Strike', 'Type', 'Expiration Date'], how='outer'
-                        )
-                        _merge_confronto['Differenza'] = (
-                            _merge_confronto['Settle Data 2'] - _merge_confronto['Settle Data 1']
-                        )
-                        _merge_confronto = _merge_confronto.rename(columns={'Expiration Date': 'Scadenza'})
-                        _merge_confronto['Scadenza'] = _merge_confronto['Scadenza'].dt.date
-
-                        _scadenze_confronto = sorted(_merge_confronto['Scadenza'].unique())
-                        col_filt1, col_filt2 = st.columns([1, 2])
-                        with col_filt1:
-                            _scadenza_scelta_confronto = st.selectbox(
-                                "Scadenza", ["Tutte"] + [s.strftime('%Y-%m-%d (%a)') for s in _scadenze_confronto],
-                                key="confronto_settlement_scadenza"
-                            )
-                        _merge_filtrato_confronto = _merge_confronto
-                        if _scadenza_scelta_confronto != "Tutte":
-                            _scad_sel_confronto = pd.to_datetime(
-                                _scadenza_scelta_confronto.split(' ')[0]
-                            ).date()
-                            _merge_filtrato_confronto = _merge_filtrato_confronto[
-                                _merge_filtrato_confronto['Scadenza'] == _scad_sel_confronto
-                            ]
-
-                        _strike_disp_confronto = sorted(_merge_filtrato_confronto['Strike'].unique())
-                        with col_filt2:
-                            if len(_strike_disp_confronto) >= 2:
-                                _smin_confronto, _smax_confronto = int(min(_strike_disp_confronto)), int(max(_strike_disp_confronto))
-                                _range_strike_confronto = st.slider(
-                                    "Intervallo Strike", min_value=_smin_confronto, max_value=_smax_confronto,
-                                    value=(_smin_confronto, _smax_confronto), step=250,
-                                    key="confronto_settlement_strike_range"
-                                )
-                                _merge_filtrato_confronto = _merge_filtrato_confronto[
-                                    (_merge_filtrato_confronto['Strike'] >= _range_strike_confronto[0]) &
-                                    (_merge_filtrato_confronto['Strike'] <= _range_strike_confronto[1])
-                                ]
-                            else:
-                                st.caption("Un solo Strike nel filtro scadenza corrente: nessun intervallo da impostare.")
-
-                        _merge_filtrato_confronto = _merge_filtrato_confronto.sort_values(
-                            ['Scadenza', 'Strike', 'Type']
-                        ).reset_index(drop=True)
-                        _colonne_confronto = ['Scadenza', 'Strike', 'Type', 'Settle Data 1', 'Settle Data 2', 'Differenza']
-                        st.dataframe(
-                            _merge_filtrato_confronto[_colonne_confronto].style.format(
-                                {'Settle Data 1': '{:.2f}', 'Settle Data 2': '{:.2f}', 'Differenza': '{:+.2f}'},
-                                na_rep='—'
-                            ),
-                            width="stretch", hide_index=True
-                        )
-                        st.caption(
-                            f"{len(_merge_filtrato_confronto)} righe mostrate "
-                            f"(— = Strike/Tipo presente solo in una delle due date)."
-                        )
 
     with tab_summary:
         st.header(f"Executive Summary per {selected_expiry_label}")
@@ -2897,12 +2754,7 @@ valutazione resta salvata anche cambiando filtro periodo.
                             textposition='top center',
                             textfont=dict(color='#c084fc', size=10),
                             marker=dict(color='#c084fc', size=13, symbol='triangle-down'),
-                            # Con le etichette gia' visibili sul grafico, il marker non ha bisogno di un
-                            # proprio hover: con hovermode='closest' un marker vicino puo' "rubare" l'hover
-                            # alla candela sotto il cursore (segnalato: barre successive ai marker perdevano
-                            # l'OHLC completo). hoverinfo='skip' lascia l'hover libero per la candela.
-                            hoverinfo='skip' if _mostra_etichette_cicli else 'all',
-                            hovertemplate=None if _mostra_etichette_cicli else '%{x}<br>Massimo confermato: %{y:,.2f}<extra></extra>'
+                            hovertemplate='%{x}<br>Massimo confermato: %{y:,.2f}<extra></extra>'
                         ))
                     if not _pivot_bassi_cicli.empty:
                         _barre_txt_bassi = _pivot_bassi_cicli['barre_da_precedente'].apply(
@@ -2917,8 +2769,7 @@ valutazione resta salvata anche cambiando filtro periodo.
                             textposition='bottom center',
                             textfont=dict(color='#38bdf8', size=10),
                             marker=dict(color='#38bdf8', size=13, symbol='triangle-up'),
-                            hoverinfo='skip' if _mostra_etichette_cicli else 'all',
-                            hovertemplate=None if _mostra_etichette_cicli else '%{x}<br>Minimo confermato: %{y:,.2f}<extra></extra>'
+                            hovertemplate='%{x}<br>Minimo confermato: %{y:,.2f}<extra></extra>'
                         ))
 
                     _df_manuali_vis_cicli = pd.DataFrame(columns=['Data', 'Tipo', 'Ordine', 'Nota'])
@@ -2953,8 +2804,7 @@ valutazione resta salvata anche cambiando filtro periodo.
                             textfont=dict(color='#facc15', size=10),
                             marker=dict(color='#facc15', size=15, symbol='star', line=dict(color='white', width=1)),
                             customdata=_df_manuali_vis_cicli['Tipo'],
-                            hoverinfo='skip' if _mostra_etichette_cicli else 'all',
-                            hovertemplate=None if _mostra_etichette_cicli else '%{text}<br>Tipo: %{customdata}<extra></extra>'
+                            hovertemplate='%{text}<br>Tipo: %{customdata}<extra></extra>'
                         ))
                     _fig_cicli.update_layout(
                         template='plotly_dark', height=650, margin=dict(l=10, r=10, t=30, b=10),
@@ -2972,24 +2822,12 @@ valutazione resta salvata anche cambiando filtro periodo.
 
                     # ---- Tabelle di convalida (rilievo matematico + giudizio dell'analista) ----
                     _CONVALIDA_COLS_CICLI = [
-                        'tipo', 'timeframe', 'ciclo_barre', 'da', 'a', 'barre', 'classificazione',
-                        'ordine', 'convalida', 'nota'
+                        'tipo', 'timeframe', 'ciclo_barre', 'da', 'a', 'barre', 'classificazione', 'convalida', 'nota'
                     ]
                     if os.path.exists(CICLI_CONVALIDA_PATH):
-                        # NON si usa parse_dates=['da','a'] di read_csv: se il file e' stato salvato
-                        # senza NESSUNA riga (es. tutte le convalide svuotate), read_csv su un CSV con
-                        # 0 righe dati lascia 'da'/'a' come dtype object invece di datetime (non c'e'
-                        # niente da cui inferire il tipo) - il successivo .dt.date sollevava
-                        # AttributeError ("Can only use .dt accessor with datetimelike values").
-                        # pd.to_datetime(..., errors='coerce') gestisce correttamente anche questo
-                        # caso limite (0 righe), oltre a eventuali date malformate isolate.
-                        _df_convalida_cicli = pd.read_csv(CICLI_CONVALIDA_PATH)
-                        for _col_data_conv in ('da', 'a'):
-                            _df_convalida_cicli[_col_data_conv] = pd.to_datetime(
-                                _df_convalida_cicli[_col_data_conv], errors='coerce'
-                            ).dt.date
-                        if 'ordine' not in _df_convalida_cicli.columns:  # file salvato prima di questa colonna
-                            _df_convalida_cicli['ordine'] = ''
+                        _df_convalida_cicli = pd.read_csv(CICLI_CONVALIDA_PATH, parse_dates=['da', 'a'])
+                        _df_convalida_cicli['da'] = _df_convalida_cicli['da'].dt.date
+                        _df_convalida_cicli['a'] = _df_convalida_cicli['a'].dt.date
                     else:
                         _df_convalida_cicli = pd.DataFrame(columns=_CONVALIDA_COLS_CICLI)
 
@@ -3001,7 +2839,6 @@ valutazione resta salvata anche cambiando filtro periodo.
                             return _classificato
                         _classificato = _classificato.sort_values('A', ascending=False).reset_index(drop=True)
                         if _df_convalida_cicli.empty:
-                            _classificato['Ordine'] = ''
                             _classificato['Convalida'] = ''
                             _classificato['Nota'] = ''
                             return _classificato
@@ -3009,21 +2846,13 @@ valutazione resta salvata anche cambiando filtro periodo.
                             (_df_convalida_cicli['tipo'] == tipo_label) &
                             (_df_convalida_cicli['timeframe'] == _tf_cicli) &
                             (_df_convalida_cicli['ciclo_barre'] == _ciclo_barre_cicli)
-                        ][['a', 'ordine', 'convalida', 'nota']].rename(
-                            columns={'ordine': 'Ordine', 'convalida': 'Convalida', 'nota': 'Nota'}
-                        )
+                        ][['a', 'convalida', 'nota']].rename(columns={'convalida': 'Convalida', 'nota': 'Nota'})
                         _unito = _classificato.merge(_override, left_on='A', right_on='a', how='left').drop(columns=['a'])
-                        _unito['Ordine'] = _unito['Ordine'].fillna('')
                         _unito['Convalida'] = _unito['Convalida'].fillna('')
                         _unito['Nota'] = _unito['Nota'].fillna('')
                         return _unito
 
                     _config_convalida_cicli = {
-                        'Ordine': st.column_config.SelectboxColumn(
-                            "Ordine (ciclo)", options=["", "T+3", "T+2", "T+1", "T", "T-1"],
-                            help="Classificazione a mano del tipo di ciclo (T+3 trimestrale, T+2 mensile, ...) "
-                                 "- il rilevatore automatico trova solo la durata, non l'ordine gerarchico."
-                        ),
                         'Convalida': st.column_config.SelectboxColumn(
                             "Convalida", options=["", "✅ Confermato", "❌ Scartato", "❓ Dubbio"]
                         ),
@@ -3102,15 +2931,13 @@ valutazione resta salvata anche cambiando filtro periodo.
                             _righe_visibili_cicli.append({
                                 'tipo': 'inverso', 'timeframe': _tf_cicli, 'ciclo_barre': _ciclo_barre_cicli,
                                 'da': _r['Da'], 'a': _r['A'], 'barre': _r['Barre'],
-                                'classificazione': _r['Classificazione'], 'ordine': _r['Ordine'],
-                                'convalida': _r['Convalida'], 'nota': _r['Nota']
+                                'classificazione': _r['Classificazione'], 'convalida': _r['Convalida'], 'nota': _r['Nota']
                             })
                         for _, _r in _edit_bassi_cicli.iterrows():
                             _righe_visibili_cicli.append({
                                 'tipo': 'standard', 'timeframe': _tf_cicli, 'ciclo_barre': _ciclo_barre_cicli,
                                 'da': _r['Da'], 'a': _r['A'], 'barre': _r['Barre'],
-                                'classificazione': _r['Classificazione'], 'ordine': _r['Ordine'],
-                                'convalida': _r['Convalida'], 'nota': _r['Nota']
+                                'classificazione': _r['Classificazione'], 'convalida': _r['Convalida'], 'nota': _r['Nota']
                             })
                         _df_visibili_cicli = pd.DataFrame(_righe_visibili_cicli, columns=_CONVALIDA_COLS_CICLI)
                         # Le chiavi si calcolano su TUTTE le righe visibili (anche quelle senza convalida/nota):
@@ -3130,8 +2957,7 @@ valutazione resta salvata anche cambiando filtro periodo.
                         else:
                             _rimanenti_cicli = _df_convalida_cicli
                         _df_da_salvare_cicli = _df_visibili_cicli[
-                            (_df_visibili_cicli['ordine'] != '') | (_df_visibili_cicli['convalida'] != '') |
-                            (_df_visibili_cicli['nota'] != '')
+                            (_df_visibili_cicli['convalida'] != '') | (_df_visibili_cicli['nota'] != '')
                         ]
                         _df_finale_cicli = pd.concat([_rimanenti_cicli, _df_da_salvare_cicli], ignore_index=True)
                         _df_finale_cicli = _df_finale_cicli.sort_values(
