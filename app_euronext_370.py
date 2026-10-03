@@ -10,14 +10,6 @@
 # Black-Scholes dal prezzo "Settle" di ciascuna opzione (euronext_module.py).
 # Sono quindi stime di modello, non dati di mercato osservati.
 #
-# Ultima modifica: 2026-10-01 - v3.7.1
-# - Confronto Settlement: aggiunto filtro Tipo (Tutti/Call/Put).
-# - Confronto Settlement: nuova colonna "⭐ Attenziona" editabile (checkbox) per
-#   marcare gli strike da tenere d'occhio - persistita in un file ad hoc
-#   (dati_locali/strike_attenzionati.csv), chiave Scadenza+Strike+Tipo,
-#   indipendente dalla coppia di date confrontata in quel momento. Nuovo
-#   interruttore "Mostra solo gli strike attenzionati" per filtrare la vista.
-#
 # Ultima modifica: 2026-10-01 - v3.7
 # - Tab Dati: nuova sezione "🔄 Confronto Settlement tra due date" - sceglie
 #   due file dalla cartella dati/, confronta Settle per Strike/Type/Scadenza
@@ -194,7 +186,7 @@
 #   aggiornare ad ogni release, insieme a questo changelog.
 # -----------------------------------------------------------------------------
 
-APP_VERSION = "3.7.1"
+APP_VERSION = "3.7"
 
 import streamlit as st
 import pandas as pd
@@ -616,7 +608,6 @@ DOC_PDF_FOLDER = "static/pdf"
 CICLI_CONVALIDA_PATH = "dati_locali/cicli_convalida.csv"
 CICLI_PREVISTI_PATH = "dati_locali/cicli_previsti.csv"
 CICLI_MANUALI_PATH = "dati_locali/cicli_manuali.csv"
-STRIKE_ATTENZIONATI_PATH = "dati_locali/strike_attenzionati.csv"
 
 if df_raw is not None and spot_price > 0:
     log_totali_giornalieri(df_raw, analysis_date, TOTALI_LOG_PATH, spot=spot_price)
@@ -806,15 +797,11 @@ if df_raw is not None:
                         _merge_confronto['Scadenza'] = _merge_confronto['Scadenza'].dt.date
 
                         _scadenze_confronto = sorted(_merge_confronto['Scadenza'].unique())
-                        col_filt1, col_filt2 = st.columns([1, 1])
+                        col_filt1, col_filt2 = st.columns([1, 2])
                         with col_filt1:
                             _scadenza_scelta_confronto = st.selectbox(
                                 "Scadenza", ["Tutte"] + [s.strftime('%Y-%m-%d (%a)') for s in _scadenze_confronto],
                                 key="confronto_settlement_scadenza"
-                            )
-                        with col_filt2:
-                            _tipo_scelto_confronto = st.radio(
-                                "Tipo", ["Tutti", "Call", "Put"], horizontal=True, key="confronto_settlement_tipo"
                             )
                         _merge_filtrato_confronto = _merge_confronto
                         if _scadenza_scelta_confronto != "Tutte":
@@ -824,104 +811,38 @@ if df_raw is not None:
                             _merge_filtrato_confronto = _merge_filtrato_confronto[
                                 _merge_filtrato_confronto['Scadenza'] == _scad_sel_confronto
                             ]
-                        if _tipo_scelto_confronto != "Tutti":
-                            _merge_filtrato_confronto = _merge_filtrato_confronto[
-                                _merge_filtrato_confronto['Type'] == _tipo_scelto_confronto
-                            ]
 
                         _strike_disp_confronto = sorted(_merge_filtrato_confronto['Strike'].unique())
-                        if len(_strike_disp_confronto) >= 2:
-                            _smin_confronto, _smax_confronto = int(min(_strike_disp_confronto)), int(max(_strike_disp_confronto))
-                            _range_strike_confronto = st.slider(
-                                "Intervallo Strike", min_value=_smin_confronto, max_value=_smax_confronto,
-                                value=(_smin_confronto, _smax_confronto), step=250,
-                                key="confronto_settlement_strike_range"
-                            )
-                            _merge_filtrato_confronto = _merge_filtrato_confronto[
-                                (_merge_filtrato_confronto['Strike'] >= _range_strike_confronto[0]) &
-                                (_merge_filtrato_confronto['Strike'] <= _range_strike_confronto[1])
-                            ]
-                        else:
-                            st.caption("Meno di due Strike nel filtro corrente: nessun intervallo da impostare.")
-
-                        # ---- Colonna "da attenzionare", persistita su file (sopravvive ai filtri e ai
-                        # riavvii dell'app) - chiave Scadenza+Strike+Tipo, indipendente dalla coppia di
-                        # date confrontate in questo momento.
-                        _ATTENZIONATI_COLS = ['scadenza', 'strike', 'tipo', 'attenzionato']
-                        if os.path.exists(STRIKE_ATTENZIONATI_PATH):
-                            _df_attenzionati = pd.read_csv(STRIKE_ATTENZIONATI_PATH)
-                            _df_attenzionati['scadenza'] = pd.to_datetime(
-                                _df_attenzionati['scadenza'], errors='coerce'
-                            ).dt.date
-                        else:
-                            _df_attenzionati = pd.DataFrame(columns=_ATTENZIONATI_COLS)
-
-                        _merge_filtrato_confronto = _merge_filtrato_confronto.merge(
-                            _df_attenzionati[['scadenza', 'strike', 'tipo', 'attenzionato']],
-                            left_on=['Scadenza', 'Strike', 'Type'], right_on=['scadenza', 'strike', 'tipo'],
-                            how='left'
-                        ).drop(columns=['scadenza', 'strike', 'tipo'])
-                        _merge_filtrato_confronto['attenzionato'] = (
-                            _merge_filtrato_confronto['attenzionato'].fillna(False).astype(bool)
-                        )
-                        _merge_filtrato_confronto = _merge_filtrato_confronto.rename(
-                            columns={'attenzionato': '⭐ Attenziona'}
-                        )
-
-                        _solo_attenzionati_confronto = st.checkbox(
-                            "Mostra solo gli strike attenzionati", value=False,
-                            key="confronto_settlement_solo_attenzionati"
-                        )
-                        if _solo_attenzionati_confronto:
-                            _merge_filtrato_confronto = _merge_filtrato_confronto[
-                                _merge_filtrato_confronto['⭐ Attenziona']
-                            ]
+                        with col_filt2:
+                            if len(_strike_disp_confronto) >= 2:
+                                _smin_confronto, _smax_confronto = int(min(_strike_disp_confronto)), int(max(_strike_disp_confronto))
+                                _range_strike_confronto = st.slider(
+                                    "Intervallo Strike", min_value=_smin_confronto, max_value=_smax_confronto,
+                                    value=(_smin_confronto, _smax_confronto), step=250,
+                                    key="confronto_settlement_strike_range"
+                                )
+                                _merge_filtrato_confronto = _merge_filtrato_confronto[
+                                    (_merge_filtrato_confronto['Strike'] >= _range_strike_confronto[0]) &
+                                    (_merge_filtrato_confronto['Strike'] <= _range_strike_confronto[1])
+                                ]
+                            else:
+                                st.caption("Un solo Strike nel filtro scadenza corrente: nessun intervallo da impostare.")
 
                         _merge_filtrato_confronto = _merge_filtrato_confronto.sort_values(
                             ['Scadenza', 'Strike', 'Type']
                         ).reset_index(drop=True)
-                        _colonne_confronto = [
-                            'Scadenza', 'Strike', 'Type', 'Settle Data 1', 'Settle Data 2', 'Differenza',
-                            '⭐ Attenziona'
-                        ]
-                        _edit_confronto = st.data_editor(
-                            _merge_filtrato_confronto[_colonne_confronto],
-                            width="stretch", hide_index=True, key="confronto_settlement_editor",
-                            disabled=['Scadenza', 'Strike', 'Type', 'Settle Data 1', 'Settle Data 2', 'Differenza'],
-                            column_config={
-                                'Settle Data 1': st.column_config.NumberColumn('Settle Data 1', format='%.2f'),
-                                'Settle Data 2': st.column_config.NumberColumn('Settle Data 2', format='%.2f'),
-                                'Differenza': st.column_config.NumberColumn('Differenza', format='%+.2f'),
-                                '⭐ Attenziona': st.column_config.CheckboxColumn('⭐ Attenziona'),
-                            }
+                        _colonne_confronto = ['Scadenza', 'Strike', 'Type', 'Settle Data 1', 'Settle Data 2', 'Differenza']
+                        st.dataframe(
+                            _merge_filtrato_confronto[_colonne_confronto].style.format(
+                                {'Settle Data 1': '{:.2f}', 'Settle Data 2': '{:.2f}', 'Differenza': '{:+.2f}'},
+                                na_rep='—'
+                            ),
+                            width="stretch", hide_index=True
                         )
                         st.caption(
                             f"{len(_merge_filtrato_confronto)} righe mostrate "
-                            f"(celle vuote = Strike/Tipo presente solo in una delle due date)."
+                            f"(— = Strike/Tipo presente solo in una delle due date)."
                         )
-                        if st.button("💾 Salva selezione attenzionati", key="salva_attenzionati_confronto"):
-                            _righe_edit_attenz = _edit_confronto[['Scadenza', 'Strike', 'Type', '⭐ Attenziona']].rename(
-                                columns={'Scadenza': 'scadenza', 'Strike': 'strike', 'Type': 'tipo',
-                                         '⭐ Attenziona': 'attenzionato'}
-                            )
-                            _chiavi_visibili_attenz = set(zip(
-                                _righe_edit_attenz['scadenza'], _righe_edit_attenz['strike'], _righe_edit_attenz['tipo']
-                            ))
-                            if not _df_attenzionati.empty:
-                                _rimanenti_attenz = _df_attenzionati[
-                                    ~_df_attenzionati.apply(
-                                        lambda r: (r['scadenza'], r['strike'], r['tipo']) in _chiavi_visibili_attenz,
-                                        axis=1
-                                    )
-                                ]
-                            else:
-                                _rimanenti_attenz = _df_attenzionati
-                            _da_salvare_attenz = _righe_edit_attenz[_righe_edit_attenz['attenzionato']]
-                            _finale_attenz = pd.concat([_rimanenti_attenz, _da_salvare_attenz], ignore_index=True)
-                            os.makedirs(os.path.dirname(STRIKE_ATTENZIONATI_PATH), exist_ok=True)
-                            _finale_attenz.to_csv(STRIKE_ATTENZIONATI_PATH, index=False)
-                            st.success(f"Salvati {len(_finale_attenz)} strike attenzionati in totale.")
-                            st.rerun()
 
     with tab_summary:
         st.header(f"Executive Summary per {selected_expiry_label}")
