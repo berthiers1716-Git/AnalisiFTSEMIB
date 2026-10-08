@@ -10,6 +10,15 @@
 # Black-Scholes dal prezzo "Settle" di ciascuna opzione (euronext_module.py).
 # Sono quindi stime di modello, non dati di mercato osservati.
 #
+# Ultima modifica: 2026-10-03 - v3.7.2
+# - Confronto Settlement: aggiunta una seconda colonna di selezione "🎯
+#   Scelto/Attivo" (stessa logica di "⭐ Attenziona", file persistente
+#   separato dati_locali/strike_scelti.csv) - pensata per un sottoinsieme più
+#   ristretto di strike effettivamente operativi, indipendente dalla lista
+#   più ampia degli attenzionati. Nuovo interruttore "Mostra solo gli strike
+#   scelti/attivi". Un solo pulsante di salvataggio persiste entrambe le
+#   selezioni insieme.
+#
 # Ultima modifica: 2026-10-01 - v3.7.1
 # - Confronto Settlement: aggiunto filtro Tipo (Tutti/Call/Put).
 # - Confronto Settlement: nuova colonna "⭐ Attenziona" editabile (checkbox) per
@@ -194,7 +203,7 @@
 #   aggiornare ad ogni release, insieme a questo changelog.
 # -----------------------------------------------------------------------------
 
-APP_VERSION = "3.7.1"
+APP_VERSION = "3.7.2"
 
 import streamlit as st
 import pandas as pd
@@ -617,6 +626,7 @@ CICLI_CONVALIDA_PATH = "dati_locali/cicli_convalida.csv"
 CICLI_PREVISTI_PATH = "dati_locali/cicli_previsti.csv"
 CICLI_MANUALI_PATH = "dati_locali/cicli_manuali.csv"
 STRIKE_ATTENZIONATI_PATH = "dati_locali/strike_attenzionati.csv"
+STRIKE_SCELTI_PATH = "dati_locali/strike_scelti.csv"
 
 if df_raw is not None and spot_price > 0:
     log_totali_giornalieri(df_raw, analysis_date, TOTALI_LOG_PATH, spot=spot_price)
@@ -868,13 +878,48 @@ if df_raw is not None:
                             columns={'attenzionato': '⭐ Attenziona'}
                         )
 
-                        _solo_attenzionati_confronto = st.checkbox(
-                            "Mostra solo gli strike attenzionati", value=False,
-                            key="confronto_settlement_solo_attenzionati"
+                        # ---- Seconda colonna di selezione, stessa logica della prima ma per un
+                        # sottoinsieme più ristretto (gli strike "scelti/attivi") - file separato,
+                        # cosi' le due selezioni restano indipendenti.
+                        _SCELTI_COLS = ['scadenza', 'strike', 'tipo', 'scelto']
+                        if os.path.exists(STRIKE_SCELTI_PATH):
+                            _df_scelti = pd.read_csv(STRIKE_SCELTI_PATH)
+                            _df_scelti['scadenza'] = pd.to_datetime(
+                                _df_scelti['scadenza'], errors='coerce'
+                            ).dt.date
+                        else:
+                            _df_scelti = pd.DataFrame(columns=_SCELTI_COLS)
+
+                        _merge_filtrato_confronto = _merge_filtrato_confronto.merge(
+                            _df_scelti[['scadenza', 'strike', 'tipo', 'scelto']],
+                            left_on=['Scadenza', 'Strike', 'Type'], right_on=['scadenza', 'strike', 'tipo'],
+                            how='left'
+                        ).drop(columns=['scadenza', 'strike', 'tipo'])
+                        _merge_filtrato_confronto['scelto'] = (
+                            _merge_filtrato_confronto['scelto'].fillna(False).astype(bool)
                         )
+                        _merge_filtrato_confronto = _merge_filtrato_confronto.rename(
+                            columns={'scelto': '🎯 Scelto/Attivo'}
+                        )
+
+                        col_mostra1, col_mostra2 = st.columns(2)
+                        with col_mostra1:
+                            _solo_attenzionati_confronto = st.checkbox(
+                                "Mostra solo gli strike attenzionati", value=False,
+                                key="confronto_settlement_solo_attenzionati"
+                            )
+                        with col_mostra2:
+                            _solo_scelti_confronto = st.checkbox(
+                                "Mostra solo gli strike scelti/attivi", value=False,
+                                key="confronto_settlement_solo_scelti"
+                            )
                         if _solo_attenzionati_confronto:
                             _merge_filtrato_confronto = _merge_filtrato_confronto[
                                 _merge_filtrato_confronto['⭐ Attenziona']
+                            ]
+                        if _solo_scelti_confronto:
+                            _merge_filtrato_confronto = _merge_filtrato_confronto[
+                                _merge_filtrato_confronto['🎯 Scelto/Attivo']
                             ]
 
                         _merge_filtrato_confronto = _merge_filtrato_confronto.sort_values(
@@ -882,7 +927,7 @@ if df_raw is not None:
                         ).reset_index(drop=True)
                         _colonne_confronto = [
                             'Scadenza', 'Strike', 'Type', 'Settle Data 1', 'Settle Data 2', 'Differenza',
-                            '⭐ Attenziona'
+                            '⭐ Attenziona', '🎯 Scelto/Attivo'
                         ]
                         _edit_confronto = st.data_editor(
                             _merge_filtrato_confronto[_colonne_confronto],
@@ -892,35 +937,65 @@ if df_raw is not None:
                                 'Settle Data 1': st.column_config.NumberColumn('Settle Data 1', format='%.2f'),
                                 'Settle Data 2': st.column_config.NumberColumn('Settle Data 2', format='%.2f'),
                                 'Differenza': st.column_config.NumberColumn('Differenza', format='%+.2f'),
-                                '⭐ Attenziona': st.column_config.CheckboxColumn('⭐ Attenziona'),
+                                '⭐ Attenziona': st.column_config.CheckboxColumn(
+                                    '⭐ Attenziona', help="Lista ampia di strike da tenere d'occhio."
+                                ),
+                                '🎯 Scelto/Attivo': st.column_config.CheckboxColumn(
+                                    '🎯 Scelto/Attivo', help="Sottoinsieme più ristretto: gli strike effettivamente operativi."
+                                ),
                             }
                         )
                         st.caption(
                             f"{len(_merge_filtrato_confronto)} righe mostrate "
                             f"(celle vuote = Strike/Tipo presente solo in una delle due date)."
                         )
-                        if st.button("💾 Salva selezione attenzionati", key="salva_attenzionati_confronto"):
-                            _righe_edit_attenz = _edit_confronto[['Scadenza', 'Strike', 'Type', '⭐ Attenziona']].rename(
-                                columns={'Scadenza': 'scadenza', 'Strike': 'strike', 'Type': 'tipo',
-                                         '⭐ Attenziona': 'attenzionato'}
-                            )
-                            _chiavi_visibili_attenz = set(zip(
-                                _righe_edit_attenz['scadenza'], _righe_edit_attenz['strike'], _righe_edit_attenz['tipo']
+                        if st.button("💾 Salva selezioni (attenzionati e scelti/attivi)", key="salva_attenzionati_confronto"):
+                            _righe_edit_sel = _edit_confronto[
+                                ['Scadenza', 'Strike', 'Type', '⭐ Attenziona', '🎯 Scelto/Attivo']
+                            ].rename(columns={
+                                'Scadenza': 'scadenza', 'Strike': 'strike', 'Type': 'tipo',
+                                '⭐ Attenziona': 'attenzionato', '🎯 Scelto/Attivo': 'scelto'
+                            })
+                            _chiavi_visibili_sel = set(zip(
+                                _righe_edit_sel['scadenza'], _righe_edit_sel['strike'], _righe_edit_sel['tipo']
                             ))
+
                             if not _df_attenzionati.empty:
                                 _rimanenti_attenz = _df_attenzionati[
                                     ~_df_attenzionati.apply(
-                                        lambda r: (r['scadenza'], r['strike'], r['tipo']) in _chiavi_visibili_attenz,
+                                        lambda r: (r['scadenza'], r['strike'], r['tipo']) in _chiavi_visibili_sel,
                                         axis=1
                                     )
                                 ]
                             else:
                                 _rimanenti_attenz = _df_attenzionati
-                            _da_salvare_attenz = _righe_edit_attenz[_righe_edit_attenz['attenzionato']]
+                            _da_salvare_attenz = _righe_edit_sel[
+                                _righe_edit_sel['attenzionato']
+                            ][['scadenza', 'strike', 'tipo', 'attenzionato']]
                             _finale_attenz = pd.concat([_rimanenti_attenz, _da_salvare_attenz], ignore_index=True)
                             os.makedirs(os.path.dirname(STRIKE_ATTENZIONATI_PATH), exist_ok=True)
                             _finale_attenz.to_csv(STRIKE_ATTENZIONATI_PATH, index=False)
-                            st.success(f"Salvati {len(_finale_attenz)} strike attenzionati in totale.")
+
+                            if not _df_scelti.empty:
+                                _rimanenti_scelti = _df_scelti[
+                                    ~_df_scelti.apply(
+                                        lambda r: (r['scadenza'], r['strike'], r['tipo']) in _chiavi_visibili_sel,
+                                        axis=1
+                                    )
+                                ]
+                            else:
+                                _rimanenti_scelti = _df_scelti
+                            _da_salvare_scelti = _righe_edit_sel[
+                                _righe_edit_sel['scelto']
+                            ][['scadenza', 'strike', 'tipo', 'scelto']]
+                            _finale_scelti = pd.concat([_rimanenti_scelti, _da_salvare_scelti], ignore_index=True)
+                            os.makedirs(os.path.dirname(STRIKE_SCELTI_PATH), exist_ok=True)
+                            _finale_scelti.to_csv(STRIKE_SCELTI_PATH, index=False)
+
+                            st.success(
+                                f"Salvati {len(_finale_attenz)} strike attenzionati e "
+                                f"{len(_finale_scelti)} strike scelti/attivi in totale."
+                            )
                             st.rerun()
 
     with tab_summary:
