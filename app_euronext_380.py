@@ -10,11 +10,6 @@
 # Black-Scholes dal prezzo "Settle" di ciascuna opzione (euronext_module.py).
 # Sono quindi stime di modello, non dati di mercato osservati.
 #
-# Ultima modifica: 2026-10-08 - v3.8.1
-# - Tab Dati, tabella "Dati grezzi opzioni": aggiunti filtri Tipo (Tutti/Call/Put),
-#   Volume maggiore di X e Open Interest maggiore di X (solo visualizzazione), con
-#   conteggio righe mostrate/totali.
-#
 # Ultima modifica: 2026-10-03 - v3.8.0
 # - Tab Dati: nuova sezione "📈 Andamento Settlement nel tempo (singolo Strike)" -
 #   seleziona Scadenza/Strike/Tipo e traccia il Settle nel tempo scansionando tutti
@@ -218,7 +213,7 @@
 #   aggiornare ad ogni release, insieme a questo changelog.
 # -----------------------------------------------------------------------------
 
-APP_VERSION = "3.8.1"
+APP_VERSION = "3.8.0"
 
 import streamlit as st
 import pandas as pd
@@ -761,36 +756,9 @@ if df_raw is not None:
                                  ['Strike', 'Type', 'Settle', 'Vol', 'OI', 'Delta', 'Gamma', 'IV', 'Moneyness']
                                  if c in df_selected_expiry.columns]
         _tabella_grezza = df_selected_expiry[_colonne_disponibili].copy().sort_values('Strike').reset_index(drop=True)
-
-        # Filtri della tabella dati grezzi (solo visualizzazione: non toccano le analisi degli altri tab)
-        col_fg1, col_fg2, col_fg3 = st.columns(3)
-        with col_fg1:
-            _tipo_grezza = st.radio(
-                "Tipo", ["Tutti", "Call", "Put"], horizontal=True, key="dati_grezzi_tipo"
-            )
-        with col_fg2:
-            _vol_min_grezza = st.number_input(
-                "Volume maggiore di", min_value=0, value=0, step=10, key="dati_grezzi_vol_min",
-                help="Mostra solo le righe con Volume > questo valore (0 = nessun filtro)."
-            )
-        with col_fg3:
-            _oi_min_grezza = st.number_input(
-                "Open Interest maggiore di", min_value=0, value=0, step=100, key="dati_grezzi_oi_min",
-                help="Mostra solo le righe con Open Interest > questo valore (0 = nessun filtro)."
-            )
-        _n_totale_grezza = len(_tabella_grezza)
-        if _tipo_grezza != "Tutti" and 'Type' in _tabella_grezza.columns:
-            _tabella_grezza = _tabella_grezza[_tabella_grezza['Type'] == _tipo_grezza]
-        if _vol_min_grezza > 0 and 'Vol' in _tabella_grezza.columns:
-            _tabella_grezza = _tabella_grezza[_tabella_grezza['Vol'] > _vol_min_grezza]
-        if _oi_min_grezza > 0 and 'OI' in _tabella_grezza.columns:
-            _tabella_grezza = _tabella_grezza[_tabella_grezza['OI'] > _oi_min_grezza]
-        _tabella_grezza = _tabella_grezza.reset_index(drop=True)
-
         _formati = {'Settle': '{:.2f}', 'Delta': '{:.3f}', 'Gamma': '{:.5f}', 'IV': '{:.2%}', 'Moneyness': '{:.3f}'}
         _formati_applicabili = {k: v for k, v in _formati.items() if k in _tabella_grezza.columns}
         st.dataframe(_tabella_grezza.style.format(_formati_applicabili), width="stretch", hide_index=True)
-        st.caption(f"{len(_tabella_grezza)} righe mostrate su {_n_totale_grezza}.")
         if not _spot_disponibile:
             st.caption("Colonne Delta/Gamma/IV/Moneyness non mostrate: richiedono lo Spot per essere calcolate.")
 
