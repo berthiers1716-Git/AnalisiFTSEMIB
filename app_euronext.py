@@ -10,6 +10,11 @@
 # Black-Scholes dal prezzo "Settle" di ciascuna opzione (euronext_module.py).
 # Sono quindi stime di modello, non dati di mercato osservati.
 #
+# Ultima modifica: 2026-10-08 - v3.8.2
+# - Tab Decadimento: selettore "Serie nel grafico" (Call e Put / Solo Call / Solo
+#   Put) per leggere meglio il grafico quando i due valori sono molto diversi.
+#   La tabella resta invariata (sempre Call e Put).
+#
 # Ultima modifica: 2026-10-08 - v3.8.1
 # - Tab Dati, tabella "Dati grezzi opzioni": aggiunti filtri Tipo (Tutti/Call/Put),
 #   Volume maggiore di X e Open Interest maggiore di X (solo visualizzazione), con
@@ -218,7 +223,7 @@
 #   aggiornare ad ogni release, insieme a questo changelog.
 # -----------------------------------------------------------------------------
 
-APP_VERSION = "3.8.1"
+APP_VERSION = "3.8.2"
 
 import streamlit as st
 import pandas as pd
@@ -2320,16 +2325,24 @@ sullo spot storico.
                                 "esaminati non siano consecutivi sul calendario."
                             )
 
+                        _serie_decay = st.radio(
+                            "Serie nel grafico", ["Call e Put", "Solo Call", "Solo Put"], horizontal=True,
+                            key="decay_serie_grafico",
+                            help="Per certi strike Call e Put hanno valori molto diversi e sulla stessa scala "
+                                 "una delle due curve si schiaccia: mostrandone una sola l'asse si adatta."
+                        )
+                        _mostra_call_decay = _serie_decay in ("Call e Put", "Solo Call")
+                        _mostra_put_decay = _serie_decay in ("Call e Put", "Solo Put")
                         _giorni = np.linspace(_dte_max, 0, 60)
                         _fig_decay = go.Figure()
-                        if _iv_call is not None:
+                        if _iv_call is not None and _mostra_call_decay:
                             _prezzi_call = [_bs_price(spot_price, _strike_scelto, max(g / 365.25, 1e-6),
                                                        risk_free_rate, dividend_yield, _iv_call, 'Call') for g in _giorni]
                             _fig_decay.add_trace(go.Scatter(
                                 x=_giorni, y=_prezzi_call, mode='lines', name='Call', line=dict(color='#34d399', width=2.5),
                                 hovertemplate='%{x:.1f} giorni residui<br>Call: %{y:,.2f}<extra></extra>'
                             ))
-                        if _iv_put is not None:
+                        if _iv_put is not None and _mostra_put_decay:
                             _prezzi_put = [_bs_price(spot_price, _strike_scelto, max(g / 365.25, 1e-6),
                                                       risk_free_rate, dividend_yield, _iv_put, 'Put') for g in _giorni]
                             _fig_decay.add_trace(go.Scatter(
